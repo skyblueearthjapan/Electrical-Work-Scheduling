@@ -1,5 +1,10 @@
-# Only push src/ contents
-**/**
-!src/**/*.gs
-!src/**/*.html
-!src/appsscript.json
+# Ignore everything outside src/
+# (clasp already uses rootDir=./src, but be explicit)
+**/node_modules/**
+**/.git/**
+**/docs/**
+**/スクショ/**
+**/.omc/**
+README.md
+.gitignore
+.clasprc.json
