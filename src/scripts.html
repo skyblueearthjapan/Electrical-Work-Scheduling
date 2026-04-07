@@ -1,0 +1,1294 @@
+<script>
+/* =========================================================
+   電気工事スケジューリング — フロントエンド
+   Store / API / SaveQueue / App / Gantt / Calendar / Todo / Modal
+   ========================================================= */
+
+/* ================= Utils ================= */
+const Utils = {
+  esc: (s) => String(s == null ? '' : s),  // textContent用。innerHTML禁止。
+  escAttr: (s) => String(s == null ? '' : s).replace(/"/g, '&quot;'),
+  parseDate(s) {
+    if (!s) return null;
+    if (s instanceof Date) return s;
+    const m = String(s).match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!m) return null;
+    return new Date(+m[1], +m[2] - 1, +m[3]);
+  },
+  fmtDate(d) {
+    if (!d) return '';
+    if (typeof d === 'string') d = Utils.parseDate(d);
+    if (!d) return '';
+    const y = d.getFullYear();
+    const m = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    return `${y}-${m}-${day}`;
+  },
+  daysBetween(a, b) {
+    const da = Utils.parseDate(a);
+    const db = Utils.parseDate(b);
+    if (!da || !db) return 0;
+    return Math.round((db - da) / 86400000);
+  },
+  addDays(s, n) {
+    const d = Utils.parseDate(s);
+    if (!d) return s;
+    d.setDate(d.getDate() + n);
+    return Utils.fmtDate(d);
+  },
+  genDateRange(start, days) {
+    const out = [];
+    for (let i = 0; i < days; i++) out.push(Utils.addDays(start, i));
+    return out;
+  },
+  dow(dateStr) {
+    const d = Utils.parseDate(dateStr);
+    if (!d) return '';
+    return ['日','月','火','水','木','金','土'][d.getDay()];
+  },
+  isWeekend(dateStr) {
+    const d = Utils.parseDate(dateStr);
+    if (!d) return false;
+    const w = d.getDay();
+    return w === 0 || w === 6;
+  },
+  uuid() {
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
+      return v.toString(16);
+    });
+  },
+  debounce(fn, ms) {
+    let t;
+    return function() {
+      clearTimeout(t);
+      const args = arguments;
+      t = setTimeout(() => fn.apply(null, args), ms);
+    };
+  },
+  hexWithAlpha(hex, a) {
+    if (!hex || hex[0] !== '#') return hex;
+    const h = hex.length === 4
+      ? '#' + hex[1] + hex[1] + hex[2] + hex[2] + hex[3] + hex[3]
+      : hex;
+    const alpha = Math.round(a * 255).toString(16).padStart(2, '0');
+    return h + alpha;
+  }
+};
+
+/* ================= API ================= */
+const API = {
+  call(fn, ...args) {
+    return new Promise((resolve, reject) => {
+      if (typeof google === 'undefined' || !google.script) {
+        // Local dev fallback
+        console.warn('[API] GAS environment unavailable. Stubbing:', fn);
+        resolve(null);
+        return;
+      }
+      google.script.run
+        .withSuccessHandler(resolve)
+        .withFailureHandler((err) => reject(new Error(err && err.message ? err.message : String(err))))
+        [fn](...args);
+    });
+  }
+};
+
+/* ================= Store ================= */
+const Store = {
+  state: {
+    user: { email: '', role: 'none' },
+    processes: [],
+    contractors: [],
+    okuSchedules: [],
+    contractorSchedules: [],
+    todos: [],
+    jobs: [],
+    ghostSchedules: [],
+    today: '',
+    // UI state
+    currentTab: 'gantt',
+    ganttDays: 90,
+    ganttStartDate: null,
+    ganttOkuRows: [],  // [{ 工番 }]
+    activeContractorTab: null,
+    okuCalendar: null,
+    contractorCalendars: {}
+  },
+
+  init(bootstrap) {
+    Object.assign(this.state, bootstrap);
+    this.state.ganttStartDate = this.state.today;
+    // Build ganttOkuRows from existing OkuSchedule distinct 工番
+    const set = new Set();
+    (this.state.okuSchedules || []).forEach(s => {
+      if (s['工番']) set.add(s['工番']);
+    });
+    this.state.ganttOkuRows = Array.from(set).map(j => ({ 工番: j }));
+    this.state.activeContractorTab = (this.state.contractors[0] || {}).contractorId || null;
+  },
+
+  getProcessById(id) {
+    return this.state.processes.find(p => p['processId'] === id) || null;
+  },
+  getProcessColor(id) {
+    const p = this.getProcessById(id);
+    return (p && p['色']) || '#60A5FA';
+  },
+  getContractorById(id) {
+    return this.state.contractors.find(c => c['contractorId'] === id) || null;
+  },
+  getContractorColor(id) {
+    const c = this.getContractorById(id);
+    return (c && c['識別色']) || '#6B7687';
+  },
+  getJobByNo(jobNo) {
+    return this.state.jobs.find(j => j['工番'] === jobNo) || null;
+  }
+};
+
+/* ================= SaveQueue ================= */
+/* Optimistic UI + 3s debounce + localStorage backup + beforeunload */
+const SaveQueue = {
+  LS_KEY: 'eleSchedSaveQueue.backup.v1',
+  DEBOUNCE_MS: 3000,
+  MAX_RETRIES: 3,
+  pending: {},   // { id: { fnName, args, snapshot } }
+  timer: null,
+  isSaving: false,
+  retryCount: 0,
+
+  /**
+   * @param key   string  unique op key (e.g. "oku:create:<uuid>")
+   * @param fnName string  api_xxx function
+   * @param args  array
+   */
+  enqueue(key, fnName, args) {
+    this.pending[key] = { fnName, args, enqueuedAt: Date.now() };
+    this.persist_();
+    UI.setSaveStatus('unsaved');
+    if (this.timer) clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), this.DEBOUNCE_MS);
+  },
+
+  persist_() {
+    try {
+      localStorage.setItem(this.LS_KEY, JSON.stringify(this.pending));
+    } catch (e) { console.warn('LS persist fail', e); }
+  },
+
+  restore_() {
+    try {
+      const raw = localStorage.getItem(this.LS_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed === 'object') {
+        this.pending = parsed;
+        if (Object.keys(this.pending).length > 0) {
+          UI.toast('未送信データを復元しています...', 'info');
+          setTimeout(() => this.flush(), 1000);
+        }
+      }
+    } catch (e) { console.warn('LS restore fail', e); }
+  },
+
+  clearLS_() {
+    try { localStorage.removeItem(this.LS_KEY); } catch (e) {}
+  },
+
+  async flush() {
+    if (this.isSaving) return;
+    const keys = Object.keys(this.pending);
+    if (keys.length === 0) {
+      UI.setSaveStatus('saved');
+      this.clearLS_();
+      return;
+    }
+    this.isSaving = true;
+    UI.setSaveStatus('saving');
+
+    const snapshot = { ...this.pending };
+    this.pending = {};
+    this.persist_();
+
+    let failed = 0;
+    for (const k of Object.keys(snapshot)) {
+      const op = snapshot[k];
+      try {
+        await API.call(op.fnName, ...op.args);
+      } catch (err) {
+        console.error('[SaveQueue] failed', k, err);
+        this.pending[k] = op; // re-queue
+        failed++;
+      }
+    }
+
+    this.isSaving = false;
+
+    if (failed > 0) {
+      this.retryCount++;
+      if (this.retryCount <= this.MAX_RETRIES) {
+        UI.setSaveStatus('unsaved');
+        UI.toast(`保存エラー: ${failed}件 — 再試行します`, 'error');
+        this.persist_();
+        this.timer = setTimeout(() => this.flush(), this.DEBOUNCE_MS);
+      } else {
+        UI.setSaveStatus('error');
+        UI.toast('保存に失敗しました。画面を再読み込みしてください。', 'error');
+        this.retryCount = 0;
+      }
+    } else {
+      this.retryCount = 0;
+      UI.setSaveStatus('saved');
+      this.clearLS_();
+    }
+  },
+
+  hasPending() {
+    return Object.keys(this.pending).length > 0 || this.isSaving;
+  }
+};
+
+/* ================= UI helpers ================= */
+const UI = {
+  setSaveStatus(status) {
+    const el = document.getElementById('save-status');
+    if (!el) return;
+    el.className = 'save-status ' + status;
+    el.textContent =
+      status === 'saved'   ? '✓ 保存済み' :
+      status === 'saving'  ? '⟳ 保存中...' :
+      status === 'unsaved' ? '● 未保存' :
+      status === 'error'   ? '✕ 保存エラー' : '';
+  },
+  toast(msg, type) {
+    const el = document.getElementById('toast');
+    if (!el) return;
+    el.className = 'toast show ' + (type || '');
+    el.textContent = msg;
+    clearTimeout(el._t);
+    el._t = setTimeout(() => el.classList.remove('show'), 3000);
+  },
+  showLoading(show) {
+    const el = document.getElementById('loading-overlay');
+    if (!el) return;
+    el.classList.toggle('hidden', !show);
+  },
+  openModal(html) {
+    const root = document.getElementById('modal-root');
+    root.innerHTML = ''; // safe because html comes from our own builders
+    const bd = document.createElement('div');
+    bd.className = 'modal-backdrop';
+    bd.addEventListener('click', (e) => {
+      if (e.target === bd) UI.closeModal();
+    });
+    const modal = document.createElement('div');
+    modal.className = 'modal';
+    modal.innerHTML = ''; // will be appended
+    bd.appendChild(modal);
+    root.appendChild(bd);
+    return modal;
+  },
+  closeModal() {
+    document.getElementById('modal-root').innerHTML = '';
+  }
+};
+
+/* ================= App (init + tab switch) ================= */
+const App = {
+  async init() {
+    UI.showLoading(true);
+    try {
+      SaveQueue.restore_();
+      const boot = await API.call('api_bootstrap');
+      if (!boot) {
+        UI.showLoading(false);
+        UI.toast('GAS環境外です(ローカルプレビュー)', 'info');
+        return;
+      }
+      Store.init(boot);
+      this.renderUserBadge();
+      this.renderAll();
+
+      // beforeunload guard
+      window.addEventListener('beforeunload', (e) => {
+        if (SaveQueue.hasPending()) {
+          SaveQueue.flush();
+          e.preventDefault();
+          e.returnValue = '未保存のデータがあります。ページを離れますか?';
+          return e.returnValue;
+        }
+      });
+
+      // visibility change
+      document.addEventListener('visibilitychange', () => {
+        if (document.hidden && SaveQueue.hasPending()) {
+          SaveQueue.flush();
+        }
+      });
+    } catch (err) {
+      console.error(err);
+      UI.toast('初期化エラー: ' + err.message, 'error');
+    } finally {
+      UI.showLoading(false);
+    }
+  },
+
+  renderUserBadge() {
+    const el = document.getElementById('user-badge');
+    const u = Store.state.user;
+    el.textContent = u.email ? `${u.email.split('@')[0]} (${u.role})` : '';
+  },
+
+  renderAll() {
+    Gantt.render();
+    OkuCalendar.render();
+    ContractorCalendar.renderAll();
+    Todo.render();
+  },
+
+  switchTab(name) {
+    document.querySelectorAll('.tab-link').forEach(el => {
+      el.classList.toggle('active', el.dataset.tab === name);
+    });
+    document.querySelectorAll('.tab-content').forEach(el => {
+      el.classList.toggle('active', el.id === 'tab-' + name);
+    });
+    Store.state.currentTab = name;
+
+    // Resize calendars on show (FullCalendar needs it)
+    setTimeout(() => {
+      if (name === 'oku' && Store.state.okuCalendar) {
+        Store.state.okuCalendar.updateSize();
+      } else if (name === 'cc') {
+        ContractorCalendar.onShow();
+      }
+    }, 30);
+  }
+};
+
+/* ================= Gantt ================= */
+const Gantt = {
+  dragState: null,
+
+  render() {
+    const start = Store.state.ganttStartDate || Store.state.today;
+    const days = Store.state.ganttDays;
+    const dates = Utils.genDateRange(start, days);
+
+    this.renderHeader('gantt-oku-header', dates);
+    this.renderHeader('gantt-ctr-header', dates);
+    this.renderOkuBody(dates);
+    this.renderContractorBody(dates);
+    this.syncScroll();
+  },
+
+  renderHeader(elId, dates) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    el.innerHTML = '';
+    const today = Store.state.today;
+    dates.forEach(d => {
+      const cell = document.createElement('div');
+      cell.className = 'gantt-date-cell';
+      if (Utils.isWeekend(d)) cell.classList.add('weekend');
+      if (d === today) cell.classList.add('today');
+      const parsed = Utils.parseDate(d);
+      const m = parsed.getMonth() + 1;
+      const day = parsed.getDate();
+      const dowName = Utils.dow(d);
+      const mSpan = document.createElement('div');
+      mSpan.className = 'd-month';
+      mSpan.textContent = m + '月';
+      const dSpan = document.createElement('div');
+      dSpan.className = 'd-day';
+      dSpan.textContent = day;
+      const wSpan = document.createElement('div');
+      wSpan.className = 'd-dow';
+      wSpan.textContent = dowName;
+      if (day === 1) cell.appendChild(mSpan);
+      cell.appendChild(dSpan);
+      cell.appendChild(wSpan);
+      el.appendChild(cell);
+    });
+    // width
+    el.style.minWidth = (dates.length * 32 + 460) + 'px';
+  },
+
+  renderOkuBody(dates) {
+    const body = document.getElementById('gantt-oku-body');
+    if (!body) return;
+    body.innerHTML = '';
+
+    const rows = Store.state.ganttOkuRows;
+    if (rows.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.padding = '40px';
+      empty.style.textAlign = 'center';
+      empty.style.color = 'var(--text-muted)';
+      empty.textContent = '右上の「+ 工番追加」から工番を追加してください';
+      body.appendChild(empty);
+      return;
+    }
+
+    rows.forEach((row) => {
+      const jobNo = row['工番'];
+      const job = Store.getJobByNo(jobNo);
+      const schedules = Store.state.okuSchedules.filter(s => s['工番'] === jobNo);
+      body.appendChild(this.buildRow({
+        scope: 'oku',
+        rowKey: jobNo,
+        labelHtml: this.buildLabel('🧑‍💻', jobNo),
+        schedules,
+        dates,
+        job,
+        showJobInfo: true
+      }));
+    });
+
+    body.style.minWidth = (dates.length * 32 + 460) + 'px';
+  },
+
+  renderContractorBody(dates) {
+    const body = document.getElementById('gantt-ctr-body');
+    if (!body) return;
+    body.innerHTML = '';
+    Store.state.contractors.forEach(c => {
+      const schedules = Store.state.contractorSchedules.filter(s => s['contractorId'] === c['contractorId']);
+      body.appendChild(this.buildRow({
+        scope: 'ctr',
+        rowKey: c['contractorId'],
+        labelHtml: this.buildContractorLabel(c),
+        schedules,
+        dates,
+        showJobInfo: false
+      }));
+    });
+    body.style.minWidth = (dates.length * 32 + 240) + 'px';
+  },
+
+  buildLabel(icon, text) {
+    const el = document.createElement('div');
+    el.className = 'gantt-row-label';
+    const ic = document.createElement('span');
+    ic.textContent = icon;
+    const tx = document.createElement('span');
+    tx.textContent = text;
+    tx.style.color = 'var(--accent-gold-bright)';
+    tx.style.fontWeight = '700';
+    el.appendChild(ic);
+    el.appendChild(tx);
+    return el;
+  },
+
+  buildContractorLabel(c) {
+    const el = document.createElement('div');
+    el.className = 'gantt-row-label';
+    const dot = document.createElement('span');
+    dot.style.cssText = 'display:inline-block;width:12px;height:12px;border-radius:50%;background:' + (c['識別色']||'#999');
+    const tx = document.createElement('span');
+    tx.textContent = c['業者名'];
+    el.appendChild(dot);
+    el.appendChild(tx);
+    return el;
+  },
+
+  buildRow({ scope, rowKey, labelHtml, schedules, dates, job, showJobInfo }) {
+    const row = document.createElement('div');
+    row.className = 'gantt-row';
+    row.dataset.scope = scope;
+    row.dataset.rowKey = rowKey;
+
+    row.appendChild(labelHtml);
+
+    const cellsWrap = document.createElement('div');
+    cellsWrap.className = 'gantt-row-cells';
+
+    const today = Store.state.today;
+    dates.forEach(d => {
+      const c = document.createElement('div');
+      c.className = 'gantt-cell';
+      c.dataset.date = d;
+      if (Utils.isWeekend(d)) c.classList.add('weekend');
+      if (d === today) c.classList.add('today');
+      cellsWrap.appendChild(c);
+    });
+
+    // Lane assignment
+    const lanes = this.assignLanes(schedules);
+    const laneCount = Math.max(1, lanes.laneCount);
+    row.style.minHeight = Math.max(64, laneCount * 28 + 18) + 'px';
+
+    // Bars
+    lanes.items.forEach(s => {
+      const bar = this.buildBar(s, dates, scope);
+      if (bar) cellsWrap.appendChild(bar);
+    });
+
+    row.appendChild(cellsWrap);
+
+    if (showJobInfo) {
+      row.appendChild(this.buildJobInfo(job || { 工番: rowKey }));
+    }
+
+    // Drag handlers
+    this.attachDragHandlers(cellsWrap, scope, rowKey);
+
+    return row;
+  },
+
+  buildBar(s, dates, scope) {
+    const startOffset = Utils.daysBetween(dates[0], s['start']);
+    const duration = Utils.daysBetween(s['start'], s['end']) + 1;
+    if (startOffset + duration <= 0 || startOffset >= dates.length) return null;
+    const visStart = Math.max(0, startOffset);
+    const visDur = Math.min(duration, dates.length - visStart) - (visStart - startOffset < 0 ? Math.abs(visStart - startOffset) : 0);
+    const left = visStart * 32;
+    const width = Math.max(20, visDur * 32 - 4);
+    const bar = document.createElement('div');
+    bar.className = 'gantt-bar';
+    const lane = s._lane || 0;
+    bar.style.left = left + 'px';
+    bar.style.top = (6 + lane * 28) + 'px';
+    bar.style.width = width + 'px';
+    bar.style.background = s['色'] || Store.getProcessColor(s['processId']);
+    // Contractor color stripe on top
+    if (scope === 'ctr' && s['contractorId']) {
+      bar.style.borderTopColor = Store.getContractorColor(s['contractorId']);
+    }
+    const name = s['工程名'] || (Store.getProcessById(s['processId']) || {})['工程名'] || '';
+    bar.textContent = name;
+    bar.title = `${name} / ${s['start']} - ${s['end']}${s['メモ']?' / '+s['メモ']:''}`;
+    bar.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (scope === 'oku') OkuModal.openEdit(s);
+      else ContractorModal.openEdit(s);
+    });
+    return bar;
+  },
+
+  buildJobInfo(job) {
+    const el = document.createElement('div');
+    el.className = 'gantt-job-info';
+    const jn = document.createElement('div');
+    jn.className = 'jn';
+    jn.textContent = job['工番'] || '';
+    const jc = document.createElement('div');
+    jc.className = 'jc';
+    jc.textContent = job['受注先'] || '';
+    const jp = document.createElement('div');
+    jp.className = 'jp';
+    jp.textContent = job['品名'] || '';
+    el.appendChild(jn);
+    el.appendChild(jc);
+    el.appendChild(jp);
+    return el;
+  },
+
+  assignLanes(schedules) {
+    const sorted = [...schedules].sort((a, b) => String(a['start']).localeCompare(String(b['start'])));
+    const laneEnds = [];
+    sorted.forEach(s => {
+      let placed = false;
+      for (let i = 0; i < laneEnds.length; i++) {
+        if (String(laneEnds[i]) < String(s['start'])) {
+          s._lane = i;
+          laneEnds[i] = s['end'];
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) {
+        s._lane = laneEnds.length;
+        laneEnds.push(s['end']);
+      }
+    });
+    return { items: sorted, laneCount: laneEnds.length || 1 };
+  },
+
+  attachDragHandlers(cellsWrap, scope, rowKey) {
+    let dragStart = null;
+    cellsWrap.addEventListener('mousedown', (e) => {
+      const cell = e.target.closest('.gantt-cell');
+      if (!cell) return;
+      if (e.target.closest('.gantt-bar')) return;
+      e.preventDefault();
+      dragStart = { date: cell.dataset.date, endDate: cell.dataset.date, cells: [cell] };
+      cell.classList.add('selected');
+    });
+    cellsWrap.addEventListener('mousemove', (e) => {
+      if (!dragStart) return;
+      const cell = e.target.closest('.gantt-cell');
+      if (!cell) return;
+      dragStart.cells.forEach(c => c.classList.remove('selected'));
+      dragStart.endDate = cell.dataset.date;
+      const s = dragStart.date < dragStart.endDate ? dragStart.date : dragStart.endDate;
+      const e2 = dragStart.date < dragStart.endDate ? dragStart.endDate : dragStart.date;
+      const all = Array.from(cellsWrap.querySelectorAll('.gantt-cell'));
+      const picked = all.filter(c => c.dataset.date >= s && c.dataset.date <= e2);
+      picked.forEach(c => c.classList.add('selected'));
+      dragStart.cells = picked;
+    });
+    document.addEventListener('mouseup', () => {
+      if (!dragStart) return;
+      dragStart.cells.forEach(c => c.classList.remove('selected'));
+      const s = dragStart.date < dragStart.endDate ? dragStart.date : dragStart.endDate;
+      const e = dragStart.date < dragStart.endDate ? dragStart.endDate : dragStart.date;
+      dragStart = null;
+      if (scope === 'oku') OkuModal.openNew(rowKey, s, e);
+      else ContractorModal.openNew(rowKey, s, e);
+    });
+  },
+
+  syncScroll() {
+    const a = document.getElementById('gantt-oku-wrapper');
+    const b = document.getElementById('gantt-ctr-wrapper');
+    if (!a || !b) return;
+    let lock = false;
+    const sync = (src, dst) => () => {
+      if (lock) return;
+      lock = true;
+      dst.scrollLeft = src.scrollLeft;
+      requestAnimationFrame(() => { lock = false; });
+    };
+    if (!a._syncAttached) {
+      a.addEventListener('scroll', sync(a, b));
+      b.addEventListener('scroll', sync(b, a));
+      a._syncAttached = true;
+    }
+  },
+
+  openAddJobModal() {
+    const modal = UI.openModal();
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">工番を追加</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field">
+          <label>工番検索(番号・受注先・品名で絞り込み)</label>
+          <div class="combobox">
+            <input id="job-search-input" type="text" placeholder="例: LW25056" autocomplete="off">
+            <div id="job-search-list" class="combobox-list hidden"></div>
+          </div>
+        </div>
+      </div>
+    `;
+    const input = document.getElementById('job-search-input');
+    const list = document.getElementById('job-search-list');
+    const doSearch = Utils.debounce((q) => {
+      const results = (Store.state.jobs || []).filter(j => {
+        const s = String(j['工番']||'') + ' ' + String(j['受注先']||'') + ' ' + String(j['品名']||'');
+        return s.toLowerCase().indexOf(q.toLowerCase()) !== -1;
+      }).slice(0, 20);
+      list.innerHTML = '';
+      if (results.length === 0) {
+        const empty = document.createElement('div');
+        empty.className = 'combobox-item';
+        empty.textContent = '該当する工番がありません';
+        list.appendChild(empty);
+      } else {
+        results.forEach(j => {
+          const it = document.createElement('div');
+          it.className = 'combobox-item';
+          const jn = document.createElement('div');
+          jn.className = 'ci-jn';
+          jn.textContent = j['工番'];
+          const meta = document.createElement('div');
+          meta.className = 'ci-meta';
+          meta.textContent = (j['受注先']||'') + ' / ' + (j['品名']||'');
+          it.appendChild(jn);
+          it.appendChild(meta);
+          it.addEventListener('click', () => {
+            Gantt.addOkuRow(j['工番']);
+            UI.closeModal();
+          });
+          list.appendChild(it);
+        });
+      }
+      list.classList.remove('hidden');
+    }, 200);
+    input.addEventListener('input', (e) => doSearch(e.target.value));
+    input.addEventListener('focus', () => doSearch(input.value));
+    setTimeout(() => input.focus(), 100);
+  },
+
+  addOkuRow(jobNo) {
+    if (Store.state.ganttOkuRows.some(r => r['工番'] === jobNo)) {
+      UI.toast('既に追加されています', 'info');
+      return;
+    }
+    Store.state.ganttOkuRows.push({ 工番: jobNo });
+    this.render();
+    UI.toast(`工番 ${jobNo} を追加しました`, 'success');
+  }
+};
+
+/* ================= OkuModal ================= */
+const OkuModal = {
+  openNew(jobNo, start, end) {
+    const modal = UI.openModal();
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">奥氏スケジュール 新規追加</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field"><label>工番</label><input id="f-jn" type="text" readonly></div>
+        <div class="modal-field">
+          <label>工程</label>
+          <select id="f-proc">
+            <option value="">-- 選択 --</option>
+          </select>
+        </div>
+        <div class="modal-field">
+          <label>または工程名を自由記述</label>
+          <input id="f-procname" type="text" placeholder="空欄なら上のプルダウン使用">
+        </div>
+        <div class="modal-field">
+          <label>開始日</label><input id="f-start" type="date">
+        </div>
+        <div class="modal-field">
+          <label>終了日</label><input id="f-end" type="date">
+        </div>
+        <div class="modal-field">
+          <label>メモ</label><textarea id="f-memo" placeholder="任意"></textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="UI.closeModal()">キャンセル</button>
+        <button class="btn-primary" id="f-save">保存</button>
+      </div>
+    `;
+    document.getElementById('f-jn').value = jobNo;
+    document.getElementById('f-start').value = start;
+    document.getElementById('f-end').value = end;
+    const sel = document.getElementById('f-proc');
+    Store.state.processes.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p['processId'];
+      opt.textContent = p['工程名'];
+      sel.appendChild(opt);
+    });
+    document.getElementById('f-save').addEventListener('click', () => {
+      const proc = sel.value;
+      const freeName = document.getElementById('f-procname').value.trim();
+      const procName = freeName || ((Store.getProcessById(proc) || {})['工程名'] || '');
+      if (!procName) { UI.toast('工程を選択または入力してください', 'error'); return; }
+      const color = proc ? Store.getProcessColor(proc) : Utils.hexWithAlpha('#60A5FA', 1);
+      const payload = {
+        scheduleId: Utils.uuid(),
+        工番: jobNo,
+        processId: proc || '',
+        工程名: procName,
+        start: document.getElementById('f-start').value,
+        end: document.getElementById('f-end').value,
+        色: color,
+        メモ: document.getElementById('f-memo').value,
+        updatedAt: new Date().toISOString()
+      };
+      // Optimistic
+      Store.state.okuSchedules.push(payload);
+      Gantt.render();
+      OkuCalendar.refresh();
+      SaveQueue.enqueue('oku:create:' + payload.scheduleId, 'api_createOkuSchedule', [payload]);
+      UI.closeModal();
+      UI.toast('追加しました', 'success');
+    });
+  },
+
+  openEdit(s) {
+    const modal = UI.openModal();
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">奥氏スケジュール 編集</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field"><label>工番</label><input id="f-jn" type="text" readonly></div>
+        <div class="modal-field"><label>工程名</label><input id="f-name" type="text"></div>
+        <div class="modal-field"><label>開始日</label><input id="f-start" type="date"></div>
+        <div class="modal-field"><label>終了日</label><input id="f-end" type="date"></div>
+        <div class="modal-field"><label>メモ</label><textarea id="f-memo"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-danger" id="f-del">削除</button>
+        <div style="flex:1"></div>
+        <button class="btn-ghost" onclick="UI.closeModal()">キャンセル</button>
+        <button class="btn-primary" id="f-save">保存</button>
+      </div>
+    `;
+    document.getElementById('f-jn').value = s['工番'];
+    document.getElementById('f-name').value = s['工程名'] || '';
+    document.getElementById('f-start').value = s['start'];
+    document.getElementById('f-end').value = s['end'];
+    document.getElementById('f-memo').value = s['メモ'] || '';
+    document.getElementById('f-save').addEventListener('click', () => {
+      const patch = {
+        工程名: document.getElementById('f-name').value,
+        start: document.getElementById('f-start').value,
+        end: document.getElementById('f-end').value,
+        メモ: document.getElementById('f-memo').value
+      };
+      Object.assign(s, patch);
+      Gantt.render();
+      OkuCalendar.refresh();
+      SaveQueue.enqueue('oku:update:' + s['scheduleId'], 'api_updateOkuSchedule', [s['scheduleId'], patch, s['updatedAt']]);
+      UI.closeModal();
+      UI.toast('更新しました', 'success');
+    });
+    document.getElementById('f-del').addEventListener('click', () => {
+      if (!confirm('削除しますか?')) return;
+      Store.state.okuSchedules = Store.state.okuSchedules.filter(x => x['scheduleId'] !== s['scheduleId']);
+      Gantt.render();
+      OkuCalendar.refresh();
+      SaveQueue.enqueue('oku:delete:' + s['scheduleId'], 'api_deleteOkuSchedule', [s['scheduleId'], s['updatedAt']]);
+      UI.closeModal();
+      UI.toast('削除しました', 'success');
+    });
+  }
+};
+
+/* ================= ContractorModal ================= */
+const ContractorModal = {
+  openNew(contractorId, start, end) {
+    const modal = UI.openModal();
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">業者スケジュール 新規追加</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field"><label>業者</label><input id="f-ctr" type="text" readonly></div>
+        <div class="modal-field">
+          <label>工番 <span style="color:var(--accent-red)">*</span></label>
+          <div class="combobox">
+            <input id="f-jobsearch" type="text" placeholder="工番を検索">
+            <div id="f-joblist" class="combobox-list hidden"></div>
+          </div>
+          <input id="f-jn" type="hidden">
+        </div>
+        <div class="modal-field">
+          <label>工程</label>
+          <select id="f-proc"><option value="">-- 選択 --</option></select>
+        </div>
+        <div class="modal-field"><label>工程名(自由記述)</label><input id="f-procname" type="text" placeholder="空欄ならプルダウン使用"></div>
+        <div class="modal-field"><label>開始日</label><input id="f-start" type="date"></div>
+        <div class="modal-field"><label>終了日</label><input id="f-end" type="date"></div>
+        <div class="modal-field"><label>メモ</label><textarea id="f-memo"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="UI.closeModal()">キャンセル</button>
+        <button class="btn-primary" id="f-save">保存</button>
+      </div>
+    `;
+    const c = Store.getContractorById(contractorId) || {};
+    document.getElementById('f-ctr').value = c['業者名'] || '';
+    document.getElementById('f-start').value = start;
+    document.getElementById('f-end').value = end;
+    const sel = document.getElementById('f-proc');
+    Store.state.processes.forEach(p => {
+      const opt = document.createElement('option');
+      opt.value = p['processId'];
+      opt.textContent = p['工程名'];
+      sel.appendChild(opt);
+    });
+    // job search combobox
+    const input = document.getElementById('f-jobsearch');
+    const list = document.getElementById('f-joblist');
+    const hidden = document.getElementById('f-jn');
+    const doSearch = Utils.debounce((q) => {
+      const results = (Store.state.jobs || []).filter(j => String(j['工番']||'').toLowerCase().includes(q.toLowerCase()) ||
+        String(j['受注先']||'').toLowerCase().includes(q.toLowerCase()) ||
+        String(j['品名']||'').toLowerCase().includes(q.toLowerCase())).slice(0, 15);
+      list.innerHTML = '';
+      results.forEach(j => {
+        const it = document.createElement('div');
+        it.className = 'combobox-item';
+        const jn = document.createElement('div');
+        jn.className = 'ci-jn';
+        jn.textContent = j['工番'];
+        const meta = document.createElement('div');
+        meta.className = 'ci-meta';
+        meta.textContent = (j['受注先']||'') + ' / ' + (j['品名']||'');
+        it.appendChild(jn);
+        it.appendChild(meta);
+        it.addEventListener('click', () => {
+          input.value = j['工番'];
+          hidden.value = j['工番'];
+          list.classList.add('hidden');
+        });
+        list.appendChild(it);
+      });
+      list.classList.toggle('hidden', results.length === 0);
+    }, 200);
+    input.addEventListener('input', (e) => doSearch(e.target.value));
+    input.addEventListener('focus', () => doSearch(input.value));
+
+    document.getElementById('f-save').addEventListener('click', () => {
+      const jobNo = hidden.value || input.value;
+      if (!jobNo) { UI.toast('工番を選択してください', 'error'); return; }
+      const proc = sel.value;
+      const freeName = document.getElementById('f-procname').value.trim();
+      const procName = freeName || ((Store.getProcessById(proc) || {})['工程名'] || '');
+      if (!procName) { UI.toast('工程を選択してください', 'error'); return; }
+      const color = proc ? Store.getProcessColor(proc) : '#60A5FA';
+      const payload = {
+        scheduleId: Utils.uuid(),
+        contractorId: contractorId,
+        工番: jobNo,
+        processId: proc || '',
+        工程名: procName,
+        start: document.getElementById('f-start').value,
+        end: document.getElementById('f-end').value,
+        色: color,
+        メモ: document.getElementById('f-memo').value,
+        updatedAt: new Date().toISOString()
+      };
+      Store.state.contractorSchedules.push(payload);
+      Gantt.render();
+      ContractorCalendar.refresh(contractorId);
+      SaveQueue.enqueue('ctr:create:' + payload.scheduleId, 'api_createContractorSchedule', [payload]);
+      UI.closeModal();
+      UI.toast('追加しました', 'success');
+    });
+  },
+
+  openEdit(s) {
+    const modal = UI.openModal();
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">業者スケジュール 編集</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <div class="modal-field"><label>業者</label><input id="f-ctr" type="text" readonly></div>
+        <div class="modal-field"><label>工番</label><input id="f-jn" type="text" readonly></div>
+        <div class="modal-field"><label>工程名</label><input id="f-name" type="text"></div>
+        <div class="modal-field"><label>開始日</label><input id="f-start" type="date"></div>
+        <div class="modal-field"><label>終了日</label><input id="f-end" type="date"></div>
+        <div class="modal-field"><label>メモ</label><textarea id="f-memo"></textarea></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-danger" id="f-del">削除</button>
+        <div style="flex:1"></div>
+        <button class="btn-ghost" onclick="UI.closeModal()">キャンセル</button>
+        <button class="btn-primary" id="f-save">保存</button>
+      </div>
+    `;
+    const c = Store.getContractorById(s['contractorId']) || {};
+    document.getElementById('f-ctr').value = c['業者名'] || '';
+    document.getElementById('f-jn').value = s['工番'];
+    document.getElementById('f-name').value = s['工程名'] || '';
+    document.getElementById('f-start').value = s['start'];
+    document.getElementById('f-end').value = s['end'];
+    document.getElementById('f-memo').value = s['メモ'] || '';
+    document.getElementById('f-save').addEventListener('click', () => {
+      const patch = {
+        工程名: document.getElementById('f-name').value,
+        start: document.getElementById('f-start').value,
+        end: document.getElementById('f-end').value,
+        メモ: document.getElementById('f-memo').value
+      };
+      Object.assign(s, patch);
+      Gantt.render();
+      ContractorCalendar.refresh(s['contractorId']);
+      SaveQueue.enqueue('ctr:update:' + s['scheduleId'], 'api_updateContractorSchedule', [s['scheduleId'], patch, s['updatedAt']]);
+      UI.closeModal();
+      UI.toast('更新しました', 'success');
+    });
+    document.getElementById('f-del').addEventListener('click', () => {
+      if (!confirm('削除しますか?')) return;
+      Store.state.contractorSchedules = Store.state.contractorSchedules.filter(x => x['scheduleId'] !== s['scheduleId']);
+      Gantt.render();
+      ContractorCalendar.refresh(s['contractorId']);
+      SaveQueue.enqueue('ctr:delete:' + s['scheduleId'], 'api_deleteContractorSchedule', [s['scheduleId'], s['updatedAt']]);
+      UI.closeModal();
+      UI.toast('削除しました', 'success');
+    });
+  }
+};
+
+/* ================= OkuCalendar ================= */
+const OkuCalendar = {
+  render() {
+    const el = document.getElementById('oku-calendar');
+    if (!el || typeof FullCalendar === 'undefined') return;
+    if (Store.state.okuCalendar) return; // already initialized
+    const cal = new FullCalendar.Calendar(el, {
+      initialView: 'dayGridMonth',
+      locale: 'ja',
+      height: 'auto',
+      headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
+      selectable: true,
+      select: (info) => {
+        const end = Utils.addDays(info.endStr, -1); // FullCalendar end is exclusive
+        if (Store.state.ganttOkuRows.length === 0) {
+          UI.toast('先にガントで工番を追加してください', 'info');
+          return;
+        }
+        // Use first row as default
+        const firstJob = Store.state.ganttOkuRows[0]['工番'];
+        OkuModal.openNew(firstJob, info.startStr, end);
+      },
+      eventClick: (info) => {
+        const s = Store.state.okuSchedules.find(x => x['scheduleId'] === info.event.id);
+        if (s) OkuModal.openEdit(s);
+      },
+      events: () => this.toFcEvents()
+    });
+    cal.render();
+    Store.state.okuCalendar = cal;
+  },
+
+  toFcEvents() {
+    return Store.state.okuSchedules.filter(s => !s['deletedAt']).map(s => ({
+      id: s['scheduleId'],
+      title: `${s['工番']} ${s['工程名']||''}`,
+      start: s['start'],
+      end: Utils.addDays(s['end'], 1), // inclusive→exclusive
+      allDay: true,
+      backgroundColor: s['色'] || '#60A5FA',
+      borderColor: s['色'] || '#60A5FA'
+    }));
+  },
+
+  refresh() {
+    if (Store.state.okuCalendar) {
+      Store.state.okuCalendar.refetchEvents();
+    }
+  }
+};
+
+/* ================= ContractorCalendar ================= */
+const ContractorCalendar = {
+  renderAll() {
+    const nav = document.getElementById('contractor-sub-nav');
+    const container = document.getElementById('contractor-sub-contents');
+    if (!nav || !container) return;
+    nav.innerHTML = '';
+    container.innerHTML = '';
+    Store.state.contractors.forEach((c, i) => {
+      const btn = document.createElement('button');
+      btn.className = 'sub-tab-link' + (i === 0 ? ' active' : '');
+      btn.dataset.ctr = c['contractorId'];
+      const dot = document.createElement('span');
+      dot.className = 'color-dot';
+      dot.style.background = c['識別色'] || '#999';
+      const tx = document.createElement('span');
+      tx.textContent = c['業者名'];
+      btn.appendChild(dot);
+      btn.appendChild(tx);
+      btn.addEventListener('click', () => this.switchSub(c['contractorId']));
+      nav.appendChild(btn);
+
+      const pane = document.createElement('div');
+      pane.className = 'sub-tab-pane' + (i === 0 ? ' active' : '');
+      pane.id = 'sub-' + c['contractorId'];
+      pane.innerHTML = `
+        <div class="contractor-header">
+          <div class="contractor-name"></div>
+          <div class="contractor-contact">
+            <span class="ctr-manager"></span>
+            <span class="tel"></span>
+            <span class="mail"></span>
+          </div>
+        </div>
+        <div class="fc-container" id="cal-${c['contractorId']}"></div>
+        <div class="memo-section">
+          <h3>依頼状況メモ</h3>
+          <div class="memo-input-row">
+            <input type="text" placeholder="新しいメモを追加..." class="ctr-todo-input" maxlength="200">
+            <button class="btn-primary">追加</button>
+          </div>
+          <ul class="todo-list ctr-todo-list"></ul>
+        </div>
+      `;
+      pane.querySelector('.contractor-name').textContent = c['業者名'];
+      pane.querySelector('.ctr-manager').textContent = c['担当者'] || '担当者未登録';
+      pane.querySelector('.tel').textContent = c['電話番号'] || '';
+      pane.querySelector('.mail').textContent = c['メール'] || '';
+      const input = pane.querySelector('.ctr-todo-input');
+      const btn2 = pane.querySelector('.btn-primary');
+      btn2.addEventListener('click', () => {
+        if (input.value.trim()) {
+          Todo.add(input.value.trim(), 'contractor', c['contractorId']);
+          input.value = '';
+        }
+      });
+      container.appendChild(pane);
+    });
+    // Initialize calendars lazily — create for first one
+    setTimeout(() => {
+      if (Store.state.contractors[0]) this.ensureCalendar(Store.state.contractors[0]['contractorId']);
+      Todo.render();
+    }, 50);
+  },
+
+  switchSub(contractorId) {
+    document.querySelectorAll('.sub-tab-link').forEach(el => {
+      el.classList.toggle('active', el.dataset.ctr === contractorId);
+    });
+    document.querySelectorAll('.sub-tab-pane').forEach(el => {
+      el.classList.toggle('active', el.id === 'sub-' + contractorId);
+    });
+    Store.state.activeContractorTab = contractorId;
+    this.ensureCalendar(contractorId);
+    setTimeout(() => {
+      const cal = Store.state.contractorCalendars[contractorId];
+      if (cal) cal.updateSize();
+    }, 30);
+  },
+
+  ensureCalendar(contractorId) {
+    if (Store.state.contractorCalendars[contractorId]) return;
+    const el = document.getElementById('cal-' + contractorId);
+    if (!el || typeof FullCalendar === 'undefined') return;
+    const cal = new FullCalendar.Calendar(el, {
+      initialView: 'dayGridMonth',
+      locale: 'ja',
+      height: 'auto',
+      headerToolbar: { left: 'prev,next today', center: 'title', right: '' },
+      selectable: true,
+      select: (info) => {
+        const end = Utils.addDays(info.endStr, -1);
+        ContractorModal.openNew(contractorId, info.startStr, end);
+      },
+      eventClick: (info) => {
+        const s = Store.state.contractorSchedules.find(x => x['scheduleId'] === info.event.id);
+        if (s) ContractorModal.openEdit(s);
+      },
+      events: () => this.toFcEvents(contractorId)
+    });
+    cal.render();
+    Store.state.contractorCalendars[contractorId] = cal;
+  },
+
+  toFcEvents(contractorId) {
+    return Store.state.contractorSchedules
+      .filter(s => s['contractorId'] === contractorId && !s['deletedAt'])
+      .map(s => ({
+        id: s['scheduleId'],
+        title: `${s['工番']} ${s['工程名']||''}`,
+        start: s['start'],
+        end: Utils.addDays(s['end'], 1),
+        allDay: true,
+        backgroundColor: s['色'] || '#60A5FA',
+        borderColor: Store.getContractorColor(contractorId)
+      }));
+  },
+
+  refresh(contractorId) {
+    const cal = Store.state.contractorCalendars[contractorId];
+    if (cal) cal.refetchEvents();
+  },
+
+  onShow() {
+    const active = Store.state.activeContractorTab;
+    if (active) this.ensureCalendar(active);
+  }
+};
+
+/* ================= Todo ================= */
+const Todo = {
+  render() {
+    // oku list
+    const okuList = document.getElementById('oku-todo-list');
+    if (okuList) {
+      okuList.innerHTML = '';
+      Store.state.todos.filter(t => t['scopeType'] === 'oku').forEach(t => {
+        okuList.appendChild(this.buildItem(t));
+      });
+    }
+    // contractor lists
+    document.querySelectorAll('.sub-tab-pane').forEach(pane => {
+      const cId = pane.id.replace('sub-', '');
+      const list = pane.querySelector('.ctr-todo-list');
+      if (!list) return;
+      list.innerHTML = '';
+      Store.state.todos.filter(t => t['scopeType'] === 'contractor' && t['contractorId'] === cId).forEach(t => {
+        list.appendChild(this.buildItem(t));
+      });
+    });
+  },
+
+  buildItem(t) {
+    const li = document.createElement('li');
+    li.className = 'todo-item' + (t['isDone'] ? ' done' : '');
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!t['isDone'];
+    cb.addEventListener('change', () => {
+      t['isDone'] = cb.checked;
+      li.classList.toggle('done', cb.checked);
+      SaveQueue.enqueue('todo:update:' + t['todoId'], 'api_updateTodo', [t['todoId'], { isDone: cb.checked }]);
+    });
+    const tx = document.createElement('span');
+    tx.className = 'todo-text';
+    tx.textContent = t['text'] || '';
+    tx.contentEditable = 'true';
+    tx.addEventListener('blur', () => {
+      const nv = tx.textContent.trim();
+      if (nv !== t['text']) {
+        t['text'] = nv;
+        SaveQueue.enqueue('todo:update:' + t['todoId'], 'api_updateTodo', [t['todoId'], { text: nv }]);
+      }
+    });
+    const acts = document.createElement('div');
+    acts.className = 'todo-actions';
+    const del = document.createElement('button');
+    del.className = 'todo-action-btn danger';
+    del.textContent = '削除';
+    del.addEventListener('click', () => {
+      if (!confirm('削除しますか?')) return;
+      Store.state.todos = Store.state.todos.filter(x => x['todoId'] !== t['todoId']);
+      this.render();
+      SaveQueue.enqueue('todo:delete:' + t['todoId'], 'api_deleteTodo', [t['todoId']]);
+    });
+    acts.appendChild(del);
+    li.appendChild(cb);
+    li.appendChild(tx);
+    li.appendChild(acts);
+    return li;
+  },
+
+  addFromInput(inputId, scopeType, contractorId) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return;
+    this.add(text, scopeType, contractorId);
+    input.value = '';
+  },
+
+  add(text, scopeType, contractorId) {
+    const t = {
+      todoId: Utils.uuid(),
+      scopeType: scopeType,
+      contractorId: contractorId || '',
+      text: text,
+      isDone: false,
+      sortOrder: Date.now(),
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    Store.state.todos.push(t);
+    this.render();
+    SaveQueue.enqueue('todo:create:' + t.todoId, 'api_createTodo', [{
+      scopeType: scopeType, contractorId: contractorId || '', text: text
+    }]);
+  }
+};
+
+/* ================= Boot ================= */
+document.addEventListener('DOMContentLoaded', () => {
+  const sel = document.getElementById('gantt-days-select');
+  if (sel) sel.addEventListener('change', (e) => {
+    Store.state.ganttDays = parseInt(e.target.value, 10) || 90;
+    Gantt.render();
+  });
+  App.init();
+});
+</script>

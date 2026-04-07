@@ -1,0 +1,124 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <base target="_top">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>電気工事スケジューリング</title>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <link href="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.css" rel="stylesheet">
+  <?!= include('styles'); ?>
+</head>
+<body class="theme-dark">
+
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar-brand">
+      <span class="brand-icon">⚡</span>
+      <span class="brand-text">電気工事スケジューリング</span>
+    </div>
+    <nav class="tab-nav" id="main-tab-nav">
+      <button class="tab-link active" data-tab="gantt" onclick="App.switchTab('gantt')">ガント管理</button>
+      <button class="tab-link"        data-tab="oku"   onclick="App.switchTab('oku')">奥氏カレンダー</button>
+      <button class="tab-link"        data-tab="cc"    onclick="App.switchTab('cc')">業者カレンダー</button>
+    </nav>
+    <div class="topbar-status">
+      <span id="save-status" class="save-status saved">✓ 保存済み</span>
+      <span id="user-badge" class="user-badge"></span>
+    </div>
+  </header>
+
+  <!-- Loading Overlay -->
+  <div id="loading-overlay" class="loading-overlay">
+    <div class="loading-spinner"></div>
+    <div class="loading-text">読み込み中...</div>
+  </div>
+
+  <!-- Tab Contents -->
+  <main class="main-container">
+
+    <!-- ========= Tab 1: ガント管理 ========= -->
+    <section class="tab-content active" id="tab-gantt">
+      <div class="panel panel-gantt">
+        <div class="panel-header">
+          <div class="panel-title">ガント管理</div>
+          <div class="panel-controls">
+            <div class="control-group">
+              <label>表示日数:</label>
+              <select id="gantt-days-select">
+                <option value="30">30日</option>
+                <option value="60">60日</option>
+                <option value="90" selected>90日</option>
+                <option value="180">180日</option>
+              </select>
+            </div>
+            <button class="btn-primary" onclick="Gantt.openAddJobModal()">+ 工番追加</button>
+            <button class="btn-ghost" onclick="Gantt.render()">🔄 更新</button>
+          </div>
+        </div>
+
+        <!-- 奥氏エリア -->
+        <div class="gantt-section" id="gantt-oku-section">
+          <div class="gantt-section-label">奥氏</div>
+          <div class="gantt-scroll-wrapper" id="gantt-oku-wrapper">
+            <div class="gantt-header-row" id="gantt-oku-header"></div>
+            <div class="gantt-body" id="gantt-oku-body"></div>
+          </div>
+        </div>
+
+        <!-- 業者エリア -->
+        <div class="gantt-section" id="gantt-contractor-section">
+          <div class="gantt-section-label">外注電気業者</div>
+          <div class="gantt-scroll-wrapper" id="gantt-ctr-wrapper">
+            <div class="gantt-header-row" id="gantt-ctr-header"></div>
+            <div class="gantt-body" id="gantt-ctr-body"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= Tab 2: 奥氏カレンダー ========= -->
+    <section class="tab-content" id="tab-oku">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">奥氏カレンダー</div>
+        </div>
+        <div id="oku-calendar" class="fc-container"></div>
+        <div class="memo-section">
+          <h3>作業状況メモ</h3>
+          <div class="memo-input-row">
+            <input type="text" id="oku-todo-input" placeholder="新しいメモを追加..." maxlength="200">
+            <button class="btn-primary" onclick="Todo.addFromInput('oku-todo-input','oku',null)">追加</button>
+          </div>
+          <ul id="oku-todo-list" class="todo-list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ========= Tab 3: 業者カレンダー ========= -->
+    <section class="tab-content" id="tab-cc">
+      <div class="panel">
+        <div class="panel-header">
+          <div class="panel-title">業者カレンダー</div>
+        </div>
+        <nav class="sub-tab-nav" id="contractor-sub-nav"></nav>
+        <div id="contractor-sub-contents"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Modal Root -->
+  <div id="modal-root"></div>
+
+  <!-- Toast -->
+  <div id="toast" class="toast"></div>
+
+  <!-- Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/index.global.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.20/locales/ja.global.min.js"></script>
+
+  <?!= include('scripts'); ?>
+
+</body>
+</html>

@@ -1,0 +1,5 @@
+# Only push src/ contents
+**/**
+!src/**/*.gs
+!src/**/*.html
+!src/appsscript.json

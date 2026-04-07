@@ -1,0 +1,32 @@
+# clasp
+.clasp.json
+.clasprc.json
+
+# Node
+node_modules/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# Build
+dist/
+build/
+
+# Logs
+*.log
+
+# Temporary
+*.tmp
+*.bak
+
+# OMC
+.omc/
+
+# スクショ (private assets, not committed)
+スクショ/
