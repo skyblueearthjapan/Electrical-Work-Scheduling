@@ -216,6 +216,13 @@ const AIService = (function() {
       const reason = fb && fb.blockReason ? '(' + fb.blockReason + ')' : '';
       throw new Error('Gemini 応答に candidates がありません ' + reason);
     }
+    // 応答が maxOutputTokens で打ち切られていたら明示的にエラー化
+    if (candidate.finishReason && candidate.finishReason !== 'STOP') {
+      if (candidate.finishReason === 'MAX_TOKENS') {
+        throw new Error('AI 応答がトークン上限で打ち切られました。入力件数を減らすか MAX_TOKENS を更に拡大してください。');
+      }
+      Logger.log('[AI] finishReason=' + candidate.finishReason);
+    }
     const parts = candidate.content && candidate.content.parts;
     if (!parts || !parts.length) throw new Error('Gemini 応答に parts がありません');
     const content = parts[0].text || '';

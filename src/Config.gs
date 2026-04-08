@@ -124,7 +124,9 @@ const CONFIG = {
   AI: {
     PROVIDER: 'gemini',                  // 'gemini' | 'openai'
     MODEL: 'gemini-2.5-flash',           // 2026/4 時点の安定版・無料枠あり
-    MAX_TOKENS: 1024,
+    // 複数行入力(items 配列)で応答が切れないよう 4096 に拡大。
+    // Gemini 2.5 Flash は thinking tokens も消費するため余裕を確保。
+    MAX_TOKENS: 4096,
     TEMPERATURE: 0,
     INPUT_MAX_CHARS: 2000,
     RATE_LIMIT_PER_MIN: 30
