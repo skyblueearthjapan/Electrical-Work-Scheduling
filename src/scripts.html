@@ -1314,8 +1314,14 @@ const ContractorCalendar = {
             </div>
           </div>
           <div class="fc-container" id="cal-${c['contractorId']}"></div>
+
+          <div class="memo-section auto-status-section">
+            <h3>📋 依頼状況(スケジュールから自動生成)</h3>
+            <ul class="auto-status-list" data-ctr-status="${c['contractorId']}"></ul>
+          </div>
+
           <div class="memo-section">
-            <h3>依頼状況メモ</h3>
+            <h3>📝 依頼状況メモ(自由記入)</h3>
             <div class="memo-input-row">
               <input type="text" placeholder="新しいメモを追加..." class="ctr-todo-input" maxlength="200">
               <button class="btn-primary">追加</button>
@@ -1345,7 +1351,10 @@ const ContractorCalendar = {
       container.appendChild(pane);
     });
 
-    setTimeout(() => Todo.render(), 50);
+    setTimeout(() => {
+      Todo.render();
+      Store.state.contractors.forEach(c => this.renderRequestStatus(c['contractorId']));
+    }, 50);
   },
 
   ensureCalendar(contractorId) {
@@ -1389,6 +1398,65 @@ const ContractorCalendar = {
   refresh(contractorId) {
     const cal = Store.state.contractorCalendars[contractorId];
     if (cal) cal.refetchEvents();
+    this.renderRequestStatus(contractorId);
+  },
+
+  /** 業者の依頼状況を箇条書きで自動生成 */
+  renderRequestStatus(contractorId) {
+    const list = document.querySelector('ul.auto-status-list[data-ctr-status="' + contractorId + '"]');
+    if (!list) return;
+    list.innerHTML = '';
+
+    const today = Store.state.today;
+    const schedules = (Store.state.contractorSchedules || [])
+      .filter(s => s['contractorId'] === contractorId && !s['deletedAt'])
+      .sort((a, b) => String(a['start']).localeCompare(String(b['start'])));
+
+    if (schedules.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'auto-status-empty';
+      li.textContent = 'まだスケジュールがありません';
+      list.appendChild(li);
+      return;
+    }
+
+    const fmtJP = (iso) => {
+      const d = Utils.parseDate(iso);
+      if (!d) return iso || '';
+      return (d.getMonth() + 1) + '月' + d.getDate() + '日';
+    };
+
+    schedules.forEach(s => {
+      const job = Store.getJobByNo(s['工番']) || {};
+      const isPast = s['end'] && s['end'] < today;
+      const isCurrent = s['start'] <= today && today <= s['end'];
+      const li = document.createElement('li');
+      li.className = 'auto-status-item';
+      if (isPast) li.classList.add('past');
+      if (isCurrent) li.classList.add('current');
+
+      const dateRange = (s['start'] === s['end'])
+        ? fmtJP(s['start'])
+        : fmtJP(s['start']) + '〜' + fmtJP(s['end']);
+
+      // フィールドを span で分割しスタイル付与
+      const jn = document.createElement('span'); jn.className = 'as-jn'; jn.textContent = s['工番'] || '(工番なし)';
+      const sep1 = document.createTextNode(' / ');
+      const dest = document.createElement('span'); dest.className = 'as-dest'; dest.textContent = job['納入先'] || '(納入先不明)';
+      const sep2 = document.createTextNode(' / ');
+      const prod = document.createElement('span'); prod.className = 'as-prod'; prod.textContent = job['品名'] || '(品名不明)';
+      const sep3 = document.createTextNode(' / ');
+      const proc = document.createElement('span'); proc.className = 'as-proc'; proc.textContent = (s['工程名'] || '工程') + '予定 ' + dateRange;
+
+      li.appendChild(jn);
+      li.appendChild(sep1);
+      li.appendChild(dest);
+      li.appendChild(sep2);
+      li.appendChild(prod);
+      li.appendChild(sep3);
+      li.appendChild(proc);
+      list.appendChild(li);
+    });
   }
 };
 
@@ -1611,6 +1679,7 @@ const DailyMemoModal = {
         <button class="btn-ghost memo-nav-btn" id="memo-next" title="翌日">▶</button>
         <button class="btn-ghost memo-nav-btn" id="memo-today-btn" title="本日へ">本日</button>
         <div style="flex:1"></div>
+        ${isPast ? '' : '<button class="btn-ghost btn-task-ai" id="memo-ai-tasks" title="自由文から短期目標/本日のタスクを自動仕分け">✨ AI 仕分け</button>'}
         <button class="btn-ghost" id="memo-list-btn" title="過去メモ一覧">📋 過去メモ一覧</button>
       </div>
       <div class="modal-body daily-memo-body">
@@ -1631,6 +1700,8 @@ const DailyMemoModal = {
       if (e.target.value) this.gotoDate(e.target.value);
     });
     document.getElementById('memo-list-btn').addEventListener('click', () => this.openList());
+    const aiTaskBtn = document.getElementById('memo-ai-tasks');
+    if (aiTaskBtn) aiTaskBtn.addEventListener('click', () => AITaskModal.open());
 
     // 印刷ボタン(過去日でも有効)
     const earlyPrintBtn = document.getElementById('memo-print-btn');
@@ -2860,6 +2931,169 @@ const AIScheduleModal = {
     }
     UI.closeModal();
     UI.toast(`✨ ${injected} 件のスケジュールを投入しました`, 'success');
+  }
+};
+
+/* ================= AITaskModal (タスク自動仕分け) ================= */
+const AITaskModal = {
+  open() {
+    const modal = UI.openModal();
+    modal.classList.add('modal-tall', 'ai-modal');
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">✨ タスク AI 仕分け</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="ai-step-bar">
+        <span class="ai-step active">① 入力</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step">② 確認</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step">③ 投入</span>
+      </div>
+      <div class="modal-body ai-modal-body">
+        <p class="ai-hint">
+          自由に書いてください。AI が「短期目標」と「本日のタスク」に自動仕分けします。<br>
+          短期目標には期日があれば自動で読み取ります。
+        </p>
+        <textarea id="ait-input" placeholder="例:&#10;来月末までに新工場の電気図面完成&#10;朝礼準備&#10;LW25056 配線確認&#10;水曜までに見積回答&#10;午後 桜井さんと打ち合わせ" maxlength="2000"></textarea>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="UI.closeModal()">キャンセル</button>
+        <div style="flex:1"></div>
+        <button class="btn-primary" id="ait-parse-btn">✨ AI 仕分け</button>
+      </div>
+    `;
+    setTimeout(() => document.getElementById('ait-input').focus(), 100);
+    document.getElementById('ait-parse-btn').addEventListener('click', () => this._doParse());
+  },
+
+  async _doParse() {
+    const ta = document.getElementById('ait-input');
+    const text = (ta.value || '').trim();
+    if (!text) { UI.toast('入力が空です', 'error'); return; }
+
+    const btn = document.getElementById('ait-parse-btn');
+    btn.disabled = true;
+    btn.textContent = '⟳ 解析中…';
+
+    try {
+      const r = await API.call('api_aiParseTasks', text);
+      if (!r || (!r.goals.length && !r.tasks.length)) {
+        UI.toast('項目を抽出できませんでした', 'error');
+        btn.disabled = false;
+        btn.textContent = '✨ AI 仕分け';
+        return;
+      }
+      this._renderPreview(r);
+    } catch (err) {
+      UI.toast('AI 仕分けエラー: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = '✨ AI 仕分け';
+    }
+  },
+
+  _renderPreview(r) {
+    const goals = r.goals.map(g => ({
+      include: true, text: g.text || '', dueDate: g.dueDate || ''
+    }));
+    const tasks = r.tasks.map(t => ({
+      include: true, text: t.text || ''
+    }));
+
+    const modal = UI.openModal();
+    modal.classList.add('modal-tall', 'ai-modal');
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">✨ AI 仕分け結果</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="ai-step-bar">
+        <span class="ai-step done">① 入力</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step active">② 確認</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step">③ 投入</span>
+      </div>
+      <div class="modal-body ai-modal-body">
+        <p class="ai-hint">チェックを外すとスキップ。各項目は編集可能です。</p>
+
+        <h3 class="ait-section-title">🎯 短期目標(${goals.length}件)</h3>
+        <div class="ait-list" id="ait-goals"></div>
+
+        <h3 class="ait-section-title">📋 本日のタスク(${tasks.length}件)</h3>
+        <div class="ait-list" id="ait-tasks"></div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" id="ait-back">← 入力に戻る</button>
+        <div style="flex:1"></div>
+        <button class="btn-primary" id="ait-commit">✅ 投入</button>
+      </div>
+    `;
+
+    const goalsEl = document.getElementById('ait-goals');
+    if (goals.length === 0) {
+      goalsEl.innerHTML = '<div class="ait-empty">短期目標として認識された項目はありません</div>';
+    } else {
+      goals.forEach((g, idx) => {
+        const row = document.createElement('div');
+        row.className = 'ait-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        cb.addEventListener('change', () => { g.include = cb.checked; row.classList.toggle('excluded', !cb.checked); });
+        const tx = document.createElement('input');
+        tx.type = 'text'; tx.value = g.text;
+        tx.addEventListener('input', e => g.text = e.target.value);
+        const due = document.createElement('input');
+        due.type = 'date'; due.value = g.dueDate || '';
+        due.title = '達成期日';
+        due.addEventListener('change', e => g.dueDate = e.target.value);
+        row.appendChild(cb); row.appendChild(tx); row.appendChild(due);
+        goalsEl.appendChild(row);
+      });
+    }
+
+    const tasksEl = document.getElementById('ait-tasks');
+    if (tasks.length === 0) {
+      tasksEl.innerHTML = '<div class="ait-empty">本日のタスクとして認識された項目はありません</div>';
+    } else {
+      tasks.forEach((t, idx) => {
+        const row = document.createElement('div');
+        row.className = 'ait-row';
+        const cb = document.createElement('input');
+        cb.type = 'checkbox'; cb.checked = true;
+        cb.addEventListener('change', () => { t.include = cb.checked; row.classList.toggle('excluded', !cb.checked); });
+        const num = document.createElement('span');
+        num.className = 'task-num';
+        num.textContent = (idx < 20) ? String.fromCodePoint(0x2460 + idx) : ('(' + (idx+1) + ')');
+        const tx = document.createElement('input');
+        tx.type = 'text'; tx.value = t.text;
+        tx.addEventListener('input', e => t.text = e.target.value);
+        row.appendChild(cb); row.appendChild(num); row.appendChild(tx);
+        tasksEl.appendChild(row);
+      });
+    }
+
+    document.getElementById('ait-back').addEventListener('click', () => this.open());
+    document.getElementById('ait-commit').addEventListener('click', () => this._doCommit(goals, tasks));
+  },
+
+  _doCommit(goals, tasks) {
+    let n = 0;
+    goals.filter(g => g.include && g.text.trim()).forEach(g => {
+      DailyMemoModal.addItem('oku-goal', g.text.trim(), g.dueDate || '');
+      n++;
+    });
+    tasks.filter(t => t.include && t.text.trim()).forEach(t => {
+      DailyMemoModal.addItem('oku-task', t.text.trim(), '');
+      n++;
+    });
+    UI.closeModal();
+    UI.toast(`✨ ${n} 件を追加しました`, 'success');
+    // 既に DailyMemoModal が開いていれば再描画
+    if (document.getElementById('goal-list')) {
+      DailyMemoModal.renderTaskLists();
+    }
   }
 };
 

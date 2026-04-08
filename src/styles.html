@@ -1222,6 +1222,94 @@ input:focus, select:focus, textarea:focus {
 .combobox-item .ci-jn { color: var(--accent-gold-bright); font-weight: 700; }
 .combobox-item .ci-meta { color: var(--text-secondary); font-size: 11px; }
 
+/* =================== Auto Request Status (contractor) =================== */
+.auto-status-section {
+  background: var(--bg-elev);
+  border-top: 1px solid var(--border-base);
+}
+.auto-status-section h3 {
+  margin: 0 0 12px;
+  font-size: 13px;
+  color: var(--text-gold);
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+}
+.auto-status-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+.auto-status-empty {
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 10px 12px;
+  font-style: italic;
+}
+.auto-status-item {
+  font-size: 12px;
+  color: var(--text-secondary);
+  padding: 8px 12px;
+  border-left: 3px solid var(--border-strong);
+  background: var(--bg-panel);
+  border-radius: 4px;
+  margin-bottom: 4px;
+  line-height: 1.6;
+  transition: border-color 0.15s ease;
+}
+.auto-status-item::before { content: '• '; color: var(--accent-gold); margin-right: 4px; }
+.auto-status-item.current { border-left-color: var(--accent-gold-bright); background: rgba(229,197,114,0.05); }
+.auto-status-item.past { opacity: 0.5; border-left-color: var(--text-muted); }
+.auto-status-item .as-jn   { color: var(--accent-gold-bright); font-weight: 700; }
+.auto-status-item .as-dest { color: var(--text-primary); }
+.auto-status-item .as-prod { color: var(--text-secondary); }
+.auto-status-item .as-proc { color: var(--accent-blue); font-weight: 500; }
+
+/* =================== AITaskModal items =================== */
+.ait-section-title {
+  margin: 16px 0 8px;
+  font-size: 14px;
+  color: var(--text-gold);
+  font-weight: 700;
+}
+.ait-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-elev);
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  padding: 10px;
+}
+.ait-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.ait-row input[type="text"] {
+  flex: 1;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+.ait-row input[type="date"] {
+  width: 140px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.ait-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--accent-violet);
+}
+.ait-row.excluded { opacity: 0.4; }
+.ait-row .task-num { font-size: 14px; }
+.ait-empty {
+  padding: 8px;
+  font-size: 12px;
+  color: var(--text-muted);
+  font-style: italic;
+  text-align: center;
+}
+
 /* =================== AIScheduleModal =================== */
 .ai-modal { max-width: 720px; }
 .ai-modal .modal-title {

@@ -226,6 +226,14 @@ function api_aiParseSchedules(text, scope, contractorId) {
   return AIService.parseSchedules(text, scope, contractorName);
 }
 
+/**
+ * 自由文 → 短期目標 / 本日のタスク を自動仕分け
+ */
+function api_aiParseTasks(text) {
+  requireEditor_();
+  return AIService.parseTasks(text);
+}
+
 /* -------- DailyMemo -------- */
 
 function api_getDailyMemo(date) {

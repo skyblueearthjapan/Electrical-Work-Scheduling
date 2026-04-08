@@ -237,7 +237,113 @@ const AIService = (function() {
     return parsed;
   }
 
+  /* ============== タスク自動仕分け ============== */
+
+  function buildTaskSchema_() {
+    return {
+      type: 'OBJECT',
+      properties: {
+        goals: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              text:    { type: 'STRING' },
+              dueDate: { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' }
+            },
+            required: ['text', 'dueDate']
+          }
+        },
+        tasks: {
+          type: 'ARRAY',
+          items: {
+            type: 'OBJECT',
+            properties: {
+              text: { type: 'STRING' }
+            },
+            required: ['text']
+          }
+        }
+      },
+      required: ['goals', 'tasks']
+    };
+  }
+
+  function buildTaskSystemPrompt_(today) {
+    return [
+      'あなたは作業計画の整理アシスタントです。',
+      '日本語の自由文から「短期目標」と「本日のタスク」を自動分類してください。',
+      '',
+      '# 基準日',
+      '今日: ' + today,
+      '',
+      '# 分類ルール',
+      '## 短期目標(goals)に分類するもの',
+      '- 期間が比較的長い (数日〜数週間以上)',
+      '- 「〜まで」「期日」「期限」「目標」「完了させる」「承認を得る」などの表現を含む',
+      '- 例: 「来月末までに XX を完成」「Q2 中に承認取得」「4月15日までに納品」',
+      '- dueDate が文中で明示/相対表現で読み取れたら YYYY-MM-DD で出力、不明なら null',
+      '',
+      '## 本日のタスク(tasks)に分類するもの',
+      '- 当日中〜数日で完了する具体的な作業',
+      '- 例: 「朝礼」「配線確認」「メール返信」「○○の打ち合わせ」',
+      '- 1 行 = 1 タスクと解釈し、複数行ある場合は分割する',
+      '- 番号 (①②③, 1., - 等) や箇条書き記号、行頭の空白は除去してから text に格納',
+      '',
+      '# 日付解釈(基準日 = today)',
+      '- "M/D" → 当年(過去なら翌年)',
+      '- "明日" → today+1, "明後日" → today+2',
+      '- "来週月曜" → 翌週月曜(週は月曜始まり)',
+      '- "来月末" → 翌月末日',
+      '- "今月末" → 当月末日',
+      '',
+      '# 出力',
+      '- 必ず goals と tasks の両方を含む(空配列も可)',
+      '- text は前後の空白を除去し、80文字以内',
+      ''
+    ].join('\n');
+  }
+
+  function parseTasks(text) {
+    const email = (Session.getActiveUser().getEmail() || '').toLowerCase();
+    checkRateLimit_(email);
+
+    if (!text || !String(text).trim()) {
+      throw new Error('入力文が空です');
+    }
+    text = String(text).slice(0, CONFIG.AI.INPUT_MAX_CHARS);
+
+    const today = Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd');
+    const systemText = buildTaskSystemPrompt_(today);
+
+    const payload = {
+      systemInstruction: { parts: [{ text: systemText }] },
+      contents: [{ role: 'user', parts: [{ text: text }] }],
+      generationConfig: {
+        temperature: CONFIG.AI.TEMPERATURE,
+        maxOutputTokens: CONFIG.AI.MAX_TOKENS,
+        responseMimeType: 'application/json',
+        responseSchema: buildTaskSchema_()
+      }
+    };
+
+    const resp = callGemini_(payload);
+    const candidate = resp && resp.candidates && resp.candidates[0];
+    if (!candidate) throw new Error('Gemini 応答に candidates がありません');
+    const parts = candidate.content && candidate.content.parts;
+    if (!parts || !parts.length) throw new Error('Gemini 応答に parts がありません');
+    const content = parts[0].text || '';
+    let parsed;
+    try { parsed = JSON.parse(content); }
+    catch (e) { throw new Error('構造化JSON のパースに失敗: ' + content.substring(0, 200)); }
+    if (!parsed || !Array.isArray(parsed.goals) || !Array.isArray(parsed.tasks)) {
+      throw new Error('goals/tasks 配列が含まれていません');
+    }
+    return parsed;
+  }
+
   return {
-    parseSchedules: parseSchedules
+    parseSchedules: parseSchedules,
+    parseTasks: parseTasks
   };
 })();
