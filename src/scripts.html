@@ -1456,9 +1456,36 @@ const DailyMemoModal = {
         <button class="btn-ghost" id="memo-list-btn" title="過去メモ一覧">📋 過去メモ一覧</button>
       </div>
       <div class="modal-body daily-memo-body">
-        <textarea id="daily-memo-textarea"
-          placeholder="読み込み中..."
-          spellcheck="false"></textarea>
+
+        <section class="task-section task-section-goals">
+          <h3 class="task-section-title">🎯 短期目標</h3>
+          <p class="task-section-hint">期日付きの目標。チェックで完了し消えます(完了するまで毎日繰り越し)。</p>
+          <div class="task-add-row">
+            <input type="text" id="goal-input" placeholder="新しい短期目標..." maxlength="200">
+            <input type="date" id="goal-due" title="達成期日">
+            <button class="btn-primary" id="goal-add-btn">追加</button>
+          </div>
+          <ul class="task-list" id="goal-list"></ul>
+        </section>
+
+        <section class="task-section task-section-tasks">
+          <h3 class="task-section-title">📋 本日のタスク</h3>
+          <p class="task-section-hint">①②③… 自動採番。チェックで完了し消えます(完了するまで毎日繰り越し)。</p>
+          <div class="task-add-row">
+            <input type="text" id="task-input" placeholder="新しいタスク..." maxlength="200">
+            <button class="btn-primary" id="task-add-btn">追加</button>
+          </div>
+          <ul class="task-list" id="task-list"></ul>
+        </section>
+
+        <section class="task-section task-section-memo">
+          <h3 class="task-section-title">📝 自由メモ — <span id="memo-section-date">${titleDate}</span></h3>
+          <p class="task-section-hint">この日付専用の自由記入欄。自動保存されます。</p>
+          <textarea id="daily-memo-textarea"
+            placeholder="読み込み中..."
+            spellcheck="false"></textarea>
+        </section>
+
       </div>
       <div class="modal-footer">
         <span class="memo-hint">編集 1.5 秒後に自動保存されます</span>
@@ -1475,6 +1502,35 @@ const DailyMemoModal = {
       if (e.target.value) this.gotoDate(e.target.value);
     });
     document.getElementById('memo-list-btn').addEventListener('click', () => this.openList());
+
+    // Structured tasks/goals
+    this.renderTaskLists();
+
+    document.getElementById('goal-add-btn').addEventListener('click', () => {
+      const input = document.getElementById('goal-input');
+      const due = document.getElementById('goal-due');
+      const text = input.value.trim();
+      if (!text) return;
+      this.addItem('oku-goal', text, due.value || '');
+      input.value = '';
+      due.value = '';
+      input.focus();
+    });
+    document.getElementById('goal-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('goal-add-btn').click(); }
+    });
+
+    document.getElementById('task-add-btn').addEventListener('click', () => {
+      const input = document.getElementById('task-input');
+      const text = input.value.trim();
+      if (!text) return;
+      this.addItem('oku-task', text, '');
+      input.value = '';
+      input.focus();
+    });
+    document.getElementById('task-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); document.getElementById('task-add-btn').click(); }
+    });
 
     const ta = document.getElementById('daily-memo-textarea');
     const status = document.getElementById('memo-save-status');
@@ -1599,6 +1655,152 @@ const DailyMemoModal = {
     }
     UI.closeModal();
     await this.open(date);
+  },
+
+  /** 構造化された 短期目標 + 本日のタスク をレンダリング */
+  renderTaskLists() {
+    const goalList = document.getElementById('goal-list');
+    const taskList = document.getElementById('task-list');
+    if (!goalList || !taskList) return;
+
+    // 短期目標(期日順、未完了のみ)
+    const goals = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-goal' && !t['isDone'])
+      .sort((a, b) => String(a['dueDate']||'9999').localeCompare(String(b['dueDate']||'9999')));
+
+    goalList.innerHTML = '';
+    if (goals.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'task-empty';
+      empty.textContent = '短期目標はまだありません';
+      goalList.appendChild(empty);
+    } else {
+      goals.forEach((t) => goalList.appendChild(this.buildTaskItem(t, true, null)));
+    }
+
+    // 本日のタスク(sortOrder順、未完了のみ)
+    // ※ scopeType='oku-task'(新)と 'oku-today'(旧)の両方を拾う
+    const tasks = Store.state.todos
+      .filter(t => (t['scopeType'] === 'oku-task' || t['scopeType'] === 'oku-today') && !t['isDone'])
+      .sort((a, b) => (a['sortOrder']||0) - (b['sortOrder']||0));
+
+    taskList.innerHTML = '';
+    if (tasks.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'task-empty';
+      empty.textContent = '本日のタスクはまだありません';
+      taskList.appendChild(empty);
+    } else {
+      tasks.forEach((t, i) => taskList.appendChild(this.buildTaskItem(t, false, i + 1)));
+    }
+  },
+
+  /** タスク 1 件のリストアイテムを生成 */
+  buildTaskItem(t, withDue, indexOrNull) {
+    const li = document.createElement('li');
+    li.className = 'task-item';
+
+    // ① ② ③ … 自動採番(本日のタスクのみ)
+    if (indexOrNull != null) {
+      const num = document.createElement('span');
+      num.className = 'task-num';
+      // U+2460 = ① / U+2473 = ⑳
+      const code = (indexOrNull <= 20) ? (0x2460 + indexOrNull - 1) : null;
+      num.textContent = code != null ? String.fromCodePoint(code) : ('(' + indexOrNull + ')');
+      li.appendChild(num);
+    }
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'task-check';
+    cb.title = '完了でリストから削除';
+    cb.addEventListener('change', () => {
+      Store.state.todos = Store.state.todos.filter(x => x['todoId'] !== t['todoId']);
+      SaveQueue.enqueue('todo:delete:' + t['todoId'], 'api_deleteTodo', [t['todoId']]);
+      this.renderTaskLists();
+      UI.toast('完了しました', 'success');
+    });
+    li.appendChild(cb);
+
+    const tx = document.createElement('span');
+    tx.className = 'task-text';
+    tx.textContent = t['text'] || '';
+    tx.contentEditable = 'true';
+    tx.addEventListener('blur', () => {
+      const nv = tx.textContent.trim();
+      if (nv && nv !== t['text']) {
+        t['text'] = nv;
+        SaveQueue.enqueue('todo:update:' + t['todoId'], 'api_updateTodo', [t['todoId'], { text: nv }]);
+      }
+    });
+    tx.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') { e.preventDefault(); tx.blur(); }
+    });
+    li.appendChild(tx);
+
+    if (withDue) {
+      const due = document.createElement('input');
+      due.type = 'date';
+      due.className = 'task-due';
+      due.value = t['dueDate'] || '';
+      due.title = '達成期日';
+      due.addEventListener('change', () => {
+        t['dueDate'] = due.value;
+        SaveQueue.enqueue('todo:update:' + t['todoId'], 'api_updateTodo', [t['todoId'], { dueDate: due.value }]);
+        this.renderTaskLists();
+      });
+      li.appendChild(due);
+
+      // 過日 / 当日 ハイライト
+      if (t['dueDate']) {
+        const today = Store.state.today;
+        if (t['dueDate'] < today) li.classList.add('overdue');
+        else if (t['dueDate'] === today) li.classList.add('due-today');
+      }
+    }
+
+    const del = document.createElement('button');
+    del.className = 'task-del';
+    del.textContent = '削除';
+    del.title = 'この項目を削除';
+    del.addEventListener('click', () => {
+      if (!confirm('削除しますか?')) return;
+      Store.state.todos = Store.state.todos.filter(x => x['todoId'] !== t['todoId']);
+      SaveQueue.enqueue('todo:delete:' + t['todoId'], 'api_deleteTodo', [t['todoId']]);
+      this.renderTaskLists();
+    });
+    li.appendChild(del);
+
+    return li;
+  },
+
+  /** 構造化アイテムを追加(scopeType: 'oku-goal' | 'oku-task') */
+  addItem(scopeType, text, dueDate) {
+    const t = {
+      todoId: Utils.uuid(),
+      scopeType: scopeType,
+      contractorId: '',
+      text: text,
+      isDone: false,
+      sortOrder: Date.now(),
+      dueDate: dueDate || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    Store.state.todos.push(t);
+    this.renderTaskLists();
+    SaveQueue.enqueue('todo:create:' + t.todoId, 'api_createTodo', [{
+      scopeType: scopeType,
+      contractorId: '',
+      text: text,
+      dueDate: dueDate || ''
+    }]);
+  },
+
+  /** 単独で過去メモ一覧を開く(ガント上の専用ボタン用) */
+  openListStandalone() {
+    this._currentDate = Store.state.today; // 戻る先を今日にしておく
+    this.openList();
   },
 
   /** 過去メモ一覧モーダルを開く */

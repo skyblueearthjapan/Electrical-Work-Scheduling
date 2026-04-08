@@ -66,9 +66,14 @@
         <div class="gantt-section" id="gantt-oku-section">
           <div class="gantt-section-header">
             <div class="gantt-section-label">奥氏</div>
-            <button class="btn-task" onclick="DailyMemoModal.open()" title="本日のタスクメモを開く(日付クリックでも開けます)">
-              📓 本日のタスク
-            </button>
+            <div class="gantt-section-actions">
+              <button class="btn-task btn-task-secondary" onclick="DailyMemoModal.openListStandalone()" title="過去のタスクメモ一覧を開く">
+                📋 過去メモ一覧
+              </button>
+              <button class="btn-task" onclick="DailyMemoModal.open()" title="本日のタスクメモを開く(日付クリックでも開けます)">
+                📓 本日のタスク
+              </button>
+            </div>
           </div>
           <div class="gantt-scroll-wrapper" id="gantt-oku-wrapper">
             <div class="gantt-header-row" id="gantt-oku-header"></div>
