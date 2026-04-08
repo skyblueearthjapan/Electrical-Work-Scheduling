@@ -1270,6 +1270,36 @@ const OkuCalendar = {
         } catch (e) {
           failureCallback(e);
         }
+      },
+      // 業者カレンダーと同じ 3 行レイアウト(工番+納入先 / 品名 / 工程名)
+      eventContent: (arg) => {
+        const p = arg.event.extendedProps || {};
+        const stripe = p.processColor || '#60A5FA';
+        const wrap = document.createElement('div');
+        wrap.className = 'fc-gantt-like';
+        wrap.style.cssText =
+          'display:flex;flex-direction:column;gap:1px;padding:3px 5px 3px 6px;' +
+          'border-left:4px solid ' + stripe + ';line-height:1.2;overflow:hidden;' +
+          'font-size:11px;color:#fff;text-shadow:0 1px 1px rgba(0,0,0,0.35);';
+        const l1 = document.createElement('div');
+        l1.style.cssText = 'font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;';
+        l1.textContent = `${p.jobNo||''} ${p.dest||''}`.trim();
+        const l2 = document.createElement('div');
+        l2.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;opacity:0.92;';
+        l2.textContent = p.product || '';
+        const l3 = document.createElement('div');
+        l3.style.cssText = 'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:600;';
+        l3.textContent = p.processName || '';
+        wrap.appendChild(l1);
+        if (p.product) wrap.appendChild(l2);
+        wrap.appendChild(l3);
+        return { domNodes: [wrap] };
+      },
+      eventDidMount: (arg) => {
+        const p = arg.event.extendedProps || {};
+        arg.el.title =
+          `${p.jobNo||''} / ${p.dest||''} / ${p.product||''} / ${p.processName||''} / ` +
+          `${p.startStr||''} - ${p.endStr||''}` + (p.memo ? ' / ' + p.memo : '');
       }
     });
     cal.render();
@@ -1277,15 +1307,29 @@ const OkuCalendar = {
   },
 
   toFcEvents() {
-    return Store.state.okuSchedules.filter(s => !s['deletedAt']).map(s => ({
-      id: s['scheduleId'],
-      title: `${s['工番']} ${s['工程名']||''}`,
-      start: s['start'],
-      end: Utils.addDays(s['end'], 1), // inclusive→exclusive
-      allDay: true,
-      backgroundColor: s['色'] || '#60A5FA',
-      borderColor: s['色'] || '#60A5FA'
-    }));
+    return Store.state.okuSchedules.filter(s => !s['deletedAt']).map(s => {
+      const job = Store.getJobByNo(s['工番']) || {};
+      const processName = s['工程名'] || (Store.getProcessById(s['processId']) || {})['工程名'] || '';
+      const bg = s['色'] || Store.getProcessColor(s['processId']) || '#60A5FA';
+      return {
+        id: s['scheduleId'],
+        start: s['start'],
+        end: Utils.addDays(s['end'], 1), // inclusive→exclusive
+        allDay: true,
+        backgroundColor: bg,
+        borderColor: bg,
+        extendedProps: {
+          jobNo: s['工番'] || '',
+          dest: job['納入先'] || '',
+          product: job['品名'] || '',
+          processName: processName,
+          processColor: Store.getProcessColor(s['processId']) || bg,
+          memo: s['メモ'] || '',
+          startStr: s['start'],
+          endStr: s['end']
+        }
+      };
+    });
   },
 
   refresh() {
