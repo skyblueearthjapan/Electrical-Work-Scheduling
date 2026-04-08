@@ -48,7 +48,8 @@ const CONFIG = {
     ],
     TODO_LIST: [
       'todoId', 'scopeType', 'contractorId', 'text', 'isDone',
-      'sortOrder', 'dueDate', 'createdAt', 'updatedAt', 'updatedBy'
+      'sortOrder', 'dueDate', 'createdAt', 'updatedAt', 'updatedBy',
+      'completedDate'
     ],
     SYNC_STATE: ['key', 'value', 'updatedAt'],
     CONFLICT_LOG: [

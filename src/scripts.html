@@ -1428,22 +1428,39 @@ const DailyMemoModal = {
   _saveTimer: null,
   _currentDate: null,
 
+  /** 表示日付のタスク/目標フィルタ:
+   *  - 未完了は常に表示(自然に翌日へ繰り越される)
+   *  - 完了したものは「完了した日」のビューにだけ表示(✓付き)
+   */
+  _filterForDate(items, viewDate) {
+    return items.filter(t => {
+      if (!t['isDone']) return true;
+      const cd = t['completedDate'] || '';
+      return cd && cd === viewDate;
+    });
+  },
+
   /** 構造化された短期目標+本日のタスクから読取専用プレビュー文字列を生成 */
-  _buildStructuredPreview() {
-    const goals = Store.state.todos
-      .filter(t => t['scopeType'] === 'oku-goal' && !t['isDone'])
+  _buildStructuredPreview(viewDate) {
+    const date = viewDate || this._currentDate || Store.state.today;
+    const goalsAll = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-goal')
       .sort((a, b) => String(a['dueDate']||'9999').localeCompare(String(b['dueDate']||'9999')));
-    const tasks = Store.state.todos
-      .filter(t => (t['scopeType'] === 'oku-task' || t['scopeType'] === 'oku-today') && !t['isDone'])
+    const tasksAll = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-task' || t['scopeType'] === 'oku-today')
       .sort((a, b) => (a['sortOrder']||0) - (b['sortOrder']||0));
+
+    const goals = this._filterForDate(goalsAll, date);
+    const tasks = this._filterForDate(tasksAll, date);
 
     let s = '🎯 短期目標:\n';
     if (goals.length === 0) {
       s += '  (なし)\n';
     } else {
       goals.forEach(g => {
+        const mark = g['isDone'] ? '☑' : '☐';
         const due = g['dueDate'] ? `[期日:${g['dueDate']}]` : '';
-        s += `  ☐ ${g['text']||''} ${due}\n`.replace(/\s+$/, '\n');
+        s += `  ${mark} ${g['text']||''} ${due}\n`.replace(/\s+$/, '\n');
       });
     }
     s += '\n📋 本日のタスク:\n';
@@ -1452,7 +1469,8 @@ const DailyMemoModal = {
     } else {
       tasks.forEach((t, i) => {
         const code = (i < 20) ? String.fromCodePoint(0x2460 + i) : '(' + (i+1) + ')';
-        s += `  ${code} ${t['text']||''}\n`;
+        const mark = t['isDone'] ? '☑' : '☐';
+        s += `  ${mark} ${code} ${t['text']||''}\n`;
       });
     }
     return s;
@@ -1522,6 +1540,7 @@ const DailyMemoModal = {
       <div class="modal-header">
         <div class="modal-title" id="memo-title">${headerLabel} — ${titleDate}</div>
         <div style="display:flex;align-items:center;gap:10px;">
+          ${isPast ? '' : '<button class="btn-ghost" id="memo-mode-toggle" title="編集モード切替">✏ 編集</button>'}
           <span id="memo-save-status" class="memo-save-status">読込中…</span>
           <button class="modal-close" onclick="DailyMemoModal.close()">×</button>
         </div>
@@ -1607,13 +1626,8 @@ const DailyMemoModal = {
     try {
       const r = await API.call('api_getDailyMemo', date);
       const text = (r && r.text) || '';
-      if (text) {
-        ta.value = text;
-      } else {
-        // テンプレート(初回)
-        ta.value = '短期目標:\n  \n\n本日のタスク:\n  ① \n  ② \n  ③ \n\nメモ:\n  ';
-      }
-      ta.placeholder = '自由に記入してください...';
+      ta.value = text; // 空ならそのまま空欄。テンプレートは挿入しない。
+      ta.placeholder = 'メモ:\n  …自由に記入してください';
       status.textContent = '✓ 保存済み';
       status.className = 'memo-save-status saved';
     } catch (err) {
@@ -1678,8 +1692,23 @@ const DailyMemoModal = {
       ta.dispatchEvent(new Event('input'));
     });
 
-    // 4) フォーカス
-    setTimeout(() => ta.focus(), 100);
+    // 4) ビュー/編集モード切替の初期化(デフォルト = ビュー)
+    modal.classList.add('mode-view');
+    const toggleBtn = document.getElementById('memo-mode-toggle');
+    if (toggleBtn) {
+      toggleBtn.addEventListener('click', () => {
+        const isView = modal.classList.contains('mode-view');
+        modal.classList.toggle('mode-view', !isView);
+        modal.classList.toggle('mode-edit', isView);
+        toggleBtn.textContent = isView ? '👁 プレビュー' : '✏ 編集';
+        if (isView) {
+          // 編集モードへ → textarea にフォーカス
+          setTimeout(() => ta.focus(), 50);
+        }
+      });
+    }
+    // 5) 初期プレビューを再構築(現在の構造化状態 + 読込済テキスト)
+    this._refreshPreviewPane();
   },
 
   async save() {
@@ -1743,10 +1772,13 @@ const DailyMemoModal = {
     const taskList = document.getElementById('task-list');
     if (!goalList || !taskList) return;
 
-    // 短期目標(期日順、未完了のみ)
-    const goals = Store.state.todos
-      .filter(t => t['scopeType'] === 'oku-goal' && !t['isDone'])
+    const viewDate = this._currentDate || Store.state.today;
+
+    // 短期目標(期日順、未完了 + 当日完了したもの)
+    const goalsAll = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-goal')
       .sort((a, b) => String(a['dueDate']||'9999').localeCompare(String(b['dueDate']||'9999')));
+    const goals = this._filterForDate(goalsAll, viewDate);
 
     goalList.innerHTML = '';
     if (goals.length === 0) {
@@ -1758,11 +1790,12 @@ const DailyMemoModal = {
       goals.forEach((t) => goalList.appendChild(this.buildTaskItem(t, true, null)));
     }
 
-    // 本日のタスク(sortOrder順、未完了のみ)
+    // 本日のタスク(sortOrder順、未完了 + 当日完了したもの)
     // ※ scopeType='oku-task'(新)と 'oku-today'(旧)の両方を拾う
-    const tasks = Store.state.todos
-      .filter(t => (t['scopeType'] === 'oku-task' || t['scopeType'] === 'oku-today') && !t['isDone'])
+    const tasksAll = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-task' || t['scopeType'] === 'oku-today')
       .sort((a, b) => (a['sortOrder']||0) - (b['sortOrder']||0));
+    const tasks = this._filterForDate(tasksAll, viewDate);
 
     taskList.innerHTML = '';
     if (tasks.length === 0) {
@@ -1787,7 +1820,7 @@ const DailyMemoModal = {
   /** タスク 1 件のリストアイテムを生成 */
   buildTaskItem(t, withDue, indexOrNull) {
     const li = document.createElement('li');
-    li.className = 'task-item';
+    li.className = 'task-item' + (t['isDone'] ? ' done' : '');
 
     // ① ② ③ … 自動採番(本日のタスクのみ)
     if (indexOrNull != null) {
@@ -1802,12 +1835,18 @@ const DailyMemoModal = {
     const cb = document.createElement('input');
     cb.type = 'checkbox';
     cb.className = 'task-check';
-    cb.title = '完了でリストから削除';
+    cb.checked = !!t['isDone'];
+    cb.title = 'チェックで本日完了(翌日には繰り越しません)';
     cb.addEventListener('change', () => {
-      Store.state.todos = Store.state.todos.filter(x => x['todoId'] !== t['todoId']);
-      SaveQueue.enqueue('todo:delete:' + t['todoId'], 'api_deleteTodo', [t['todoId']]);
+      const isDone = cb.checked;
+      const completedDate = isDone ? Store.state.today : '';
+      t['isDone'] = isDone;
+      t['completedDate'] = completedDate;
+      li.classList.toggle('done', isDone);
+      SaveQueue.enqueue('todo:update:' + t['todoId'], 'api_updateTodo',
+        [t['todoId'], { isDone: isDone, completedDate: completedDate }]);
       this.renderTaskLists();
-      UI.toast('完了しました', 'success');
+      UI.toast(isDone ? '完了しました(翌日繰り越されません)' : '未完了に戻しました', 'success');
     });
     li.appendChild(cb);
 

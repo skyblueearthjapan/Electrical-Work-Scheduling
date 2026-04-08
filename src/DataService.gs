@@ -295,7 +295,8 @@ const DataService = (function() {
         dueDate: payload.dueDate || '',
         createdAt: now,
         updatedAt: now,
-        updatedBy: getCurrentUserEmail_()
+        updatedBy: getCurrentUserEmail_(),
+        completedDate: ''
       };
       appendRow_(CONFIG.SHEETS.TODO_LIST, row);
       return row;

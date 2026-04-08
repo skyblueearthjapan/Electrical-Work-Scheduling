@@ -375,6 +375,27 @@ input:focus, select:focus, textarea:focus {
   text-align: center;
 }
 
+/* ===== DailyMemoModal mode toggling ===== */
+/* View mode: hide structured editing sections, hide raw textarea, show preview pane large */
+.modal.mode-view .task-section-goals,
+.modal.mode-view .task-section-tasks,
+.modal.mode-view #daily-memo-textarea,
+.modal.mode-view .task-section-memo > .task-section-hint {
+  display: none;
+}
+.modal.mode-view .task-section-memo .task-section-title {
+  /* Slight emphasis on the preview heading */
+  color: var(--accent-gold-bright);
+}
+.modal.mode-view #memo-preview-pre {
+  min-height: 60vh;
+}
+/* Edit mode: keep preview visible above as live snapshot */
+.modal.mode-edit #memo-preview-pre {
+  min-height: 14vh;
+  max-height: 30vh;
+}
+
 /* ===== DailyMemoModal ===== */
 .task-section-goals,
 .task-section-tasks { padding: 12px 14px; }
@@ -598,6 +619,9 @@ input:focus, select:focus, textarea:focus {
   transition: border-color 0.15s ease;
 }
 .task-item:hover { border-color: var(--border-strong); }
+.task-item.done { opacity: 0.55; }
+.task-item.done .task-text { text-decoration: line-through; }
+.task-item.done .task-num { opacity: 0.5; }
 .task-item.overdue {
   border-color: rgba(248,113,113,0.5);
   background: rgba(248,113,113,0.05);
