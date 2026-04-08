@@ -1,22 +1,24 @@
 /**
- * AIService.gs — OpenAI Chat Completions による
+ * AIService.gs — Google Gemini API による
  * 自由文 → スケジュール構造化抽出
  *
  * 設計:
- * - API キーは Script Properties OPENAI_API_KEY
- * - response_format: json_schema (strict) で構造を完全強制
+ * - API キーは Script Properties GEMINI_API_KEY
+ * - generationConfig.responseSchema (OpenAPI subset) で構造を強制
  * - 入力文(複数行可) → items[] として複数スケジュール抽出
  * - 業者は事前指定(プロンプトには含めるが抽出させない)
  * - レート制限は CacheService で 30 req/min/user
  * - リトライ: 429/5xx に対して指数バックオフ最大4回
+ *
+ * 切替: CONFIG.AI.PROVIDER = 'gemini' | 'openai' で将来的に切替可能
  */
 
 const AIService = (function() {
 
-  function getKey_() {
-    const k = PropertiesService.getScriptProperties().getProperty(CONFIG.PROPS_KEYS.OPENAI_API_KEY);
+  function getGeminiKey_() {
+    const k = PropertiesService.getScriptProperties().getProperty(CONFIG.PROPS_KEYS.GEMINI_API_KEY);
     if (!k) {
-      const e = new Error('OPENAI_API_KEY が未設定です。GAS のスクリプトプロパティに登録してください。');
+      const e = new Error('GEMINI_API_KEY が未設定です。GAS のスクリプトプロパティに登録してください。');
       e.code = 503;
       throw e;
     }
@@ -45,18 +47,21 @@ const AIService = (function() {
   }
 
   /**
-   * OpenAI Chat Completions を呼び出し、リトライしつつパース済みオブジェクトを返す。
+   * Gemini generateContent を呼び出し、リトライしつつパース済みオブジェクトを返す。
    */
-  function callOpenAI_(payload) {
-    const key = getKey_();
+  function callGemini_(payload) {
+    const key = getGeminiKey_();
+    const model = CONFIG.AI.MODEL || 'gemini-2.5-flash';
+    const url = 'https://generativelanguage.googleapis.com/v1beta/models/' +
+                encodeURIComponent(model) + ':generateContent';
     let lastErr = null;
     for (let attempt = 0; attempt < 4; attempt++) {
       let res;
       try {
-        res = UrlFetchApp.fetch('https://api.openai.com/v1/chat/completions', {
+        res = UrlFetchApp.fetch(url, {
           method: 'post',
           contentType: 'application/json',
-          headers: { 'Authorization': 'Bearer ' + key },
+          headers: { 'x-goog-api-key': key },
           payload: JSON.stringify(payload),
           muteHttpExceptions: true
         });
@@ -69,55 +74,47 @@ const AIService = (function() {
       const text = res.getContentText();
       if (code === 200) {
         try { return JSON.parse(text); }
-        catch (e) { throw new Error('OpenAI 応答が JSON ではありません: ' + text.substring(0, 200)); }
+        catch (e) { throw new Error('Gemini 応答が JSON ではありません: ' + text.substring(0, 200)); }
       }
       // リトライ可能なエラー
       if (code === 429 || code >= 500) {
-        lastErr = new Error('OpenAI ' + code + ': ' + text.substring(0, 200));
+        // quota exceeded など retryable と区別が難しいので通常リトライ
+        lastErr = new Error('Gemini ' + code + ': ' + text.substring(0, 300));
         Utilities.sleep(800 * Math.pow(2, attempt) + Math.floor(Math.random() * 250));
         continue;
       }
       // 4xx (リトライ不可)
-      throw new Error('OpenAI API ' + code + ': ' + text.substring(0, 400));
+      throw new Error('Gemini API ' + code + ': ' + text.substring(0, 400));
     }
-    throw lastErr || new Error('OpenAI API: リトライ上限到達');
+    throw lastErr || new Error('Gemini API: リトライ上限到達');
   }
 
   /**
-   * 構造化スキーマ。OpenAI strict mode の制約に準拠:
-   * - additionalProperties: false 必須
-   * - 全フィールドを required に列挙
-   * - 任意フィールドは type を [..., 'null'] にする
+   * Gemini responseSchema フォーマット(OpenAPI 3.0 subset, UPPERCASE types).
    */
   function buildSchema_() {
     return {
-      name: 'extract_schedules',
-      strict: true,
-      schema: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
+      type: 'OBJECT',
+      properties: {
+        items: {
+          type: 'ARRAY',
           items: {
-            type: 'array',
-            items: {
-              type: 'object',
-              additionalProperties: false,
-              properties: {
-                工番: { type: ['string', 'null'] },
-                工程名: { type: ['string', 'null'] },
-                start: { type: ['string', 'null'], description: 'YYYY-MM-DD' },
-                end:   { type: ['string', 'null'], description: 'YYYY-MM-DD' },
-                メモ:  { type: 'string' },
-                confidence: { type: 'number' },
-                ambiguousFields: { type: 'array', items: { type: 'string' } }
-              },
-              required: ['工番','工程名','start','end','メモ','confidence','ambiguousFields']
-            }
-          },
-          globalNotes: { type: 'string' }
+            type: 'OBJECT',
+            properties: {
+              '工番':           { type: 'STRING', nullable: true },
+              '工程名':         { type: 'STRING', nullable: true },
+              start:            { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' },
+              end:              { type: 'STRING', nullable: true, description: 'YYYY-MM-DD' },
+              'メモ':           { type: 'STRING' },
+              confidence:       { type: 'NUMBER' },
+              ambiguousFields:  { type: 'ARRAY', items: { type: 'STRING' } }
+            },
+            required: ['工番','工程名','start','end','メモ','confidence','ambiguousFields']
+          }
         },
-        required: ['items', 'globalNotes']
-      }
+        globalNotes: { type: 'STRING' }
+      },
+      required: ['items', 'globalNotes']
     };
   }
 
@@ -192,24 +189,37 @@ const AIService = (function() {
       ? '業者「' + contractorName + '」のスケジュール(業者は指定済みのため抽出しないこと)'
       : '奥氏(自社)のスケジュール';
 
+    const systemText = buildSystemPrompt_(today, processes, scopeLabel);
+
     const payload = {
-      model: CONFIG.AI.MODEL,
-      temperature: CONFIG.AI.TEMPERATURE,
-      max_tokens: CONFIG.AI.MAX_TOKENS,
-      response_format: { type: 'json_schema', json_schema: buildSchema_() },
-      messages: [
-        { role: 'system', content: buildSystemPrompt_(today, processes, scopeLabel) },
-        { role: 'user', content: text }
-      ]
+      systemInstruction: {
+        parts: [{ text: systemText }]
+      },
+      contents: [
+        { role: 'user', parts: [{ text: text }] }
+      ],
+      generationConfig: {
+        temperature: CONFIG.AI.TEMPERATURE,
+        maxOutputTokens: CONFIG.AI.MAX_TOKENS,
+        responseMimeType: 'application/json',
+        responseSchema: buildSchema_()
+      }
     };
 
-    const resp = callOpenAI_(payload);
+    const resp = callGemini_(payload);
 
-    // OpenAI strict mode では choices[0].message.content に JSON 文字列が入る
-    const choice = resp && resp.choices && resp.choices[0];
-    if (!choice) throw new Error('OpenAI 応答に choices がありません');
-    const content = choice.message && choice.message.content;
-    if (!content) throw new Error('OpenAI 応答に content がありません');
+    // Gemini 応答: candidates[0].content.parts[0].text に JSON 文字列
+    const candidate = resp && resp.candidates && resp.candidates[0];
+    if (!candidate) {
+      // promptFeedback ブロックされている可能性
+      const fb = resp && resp.promptFeedback;
+      const reason = fb && fb.blockReason ? '(' + fb.blockReason + ')' : '';
+      throw new Error('Gemini 応答に candidates がありません ' + reason);
+    }
+    const parts = candidate.content && candidate.content.parts;
+    if (!parts || !parts.length) throw new Error('Gemini 応答に parts がありません');
+    const content = parts[0].text || '';
+    if (!content) throw new Error('Gemini 応答に text がありません');
 
     let parsed;
     try { parsed = JSON.parse(content); }
@@ -219,9 +229,9 @@ const AIService = (function() {
       throw new Error('items 配列が含まれていません');
     }
 
-    // usage 情報があればログ用に添付
-    if (resp.usage) parsed._usage = resp.usage;
+    if (resp.usageMetadata) parsed._usage = resp.usageMetadata;
     parsed._model = CONFIG.AI.MODEL;
+    parsed._provider = 'gemini';
     parsed._scope = scope;
     parsed._contractorName = contractorName || '';
     return parsed;

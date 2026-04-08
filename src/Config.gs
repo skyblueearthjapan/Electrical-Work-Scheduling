@@ -117,11 +117,13 @@ const CONFIG = {
     CALENDAR_ID: 'CALENDAR_ID',
     CAL_SYNC_TOKEN: 'CAL_SYNC_TOKEN',
     CAL_LAST_FULL_SYNC: 'CAL_LAST_FULL_SYNC',
-    OPENAI_API_KEY: 'OPENAI_API_KEY'
+    OPENAI_API_KEY: 'OPENAI_API_KEY',
+    GEMINI_API_KEY: 'GEMINI_API_KEY'
   },
 
   AI: {
-    MODEL: 'gpt-4o-mini',
+    PROVIDER: 'gemini',                  // 'gemini' | 'openai'
+    MODEL: 'gemini-2.5-flash',           // 2026/4 時点の安定版・無料枠あり
     MAX_TOKENS: 1024,
     TEMPERATURE: 0,
     INPUT_MAX_CHARS: 2000,
