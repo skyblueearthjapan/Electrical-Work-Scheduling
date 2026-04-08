@@ -43,7 +43,7 @@ function pushOkuRowToCalendar(row, action) {
     // create / update — まずイベントオブジェクトを構築
     const job = lookupJobByNo_(row['工番']);
     const event = {
-      summary: buildEventTitle_(row['工番'], job),
+      summary: buildEventTitle_(row['工程名'], row['工番'], job),
       description: buildEventDescription_(job, row['工程名'], row['メモ']),
       start: { date: toDateStr_(row['start']) },
       end:   { date: addDayStr_(row['end'], 1) },  // all-day end は exclusive
@@ -143,12 +143,13 @@ function addDayStr_(v, days) {
 /* -------- title / description builders -------- */
 
 /**
- * イベントタイトル: "奥:工事 {工番} {納入先} {品名}"
- *   例: 奥:工事 LW25128 大京 MTlock-1500
- *   納入先・品名が無い場合は該当部分を省略する。
+ * イベントタイトル: "奥：{工程名} {工番} {納入先} {品名}"
+ *   例: 奥:配線工事 LW25128 大京 MTlock-1500
+ *   各要素が無い場合は該当部分を省略する。
  */
-function buildEventTitle_(工番, job) {
-  const parts = ['奥:工事'];
+function buildEventTitle_(工程名, 工番, job) {
+  const head = '奥：' + String(工程名 || '').trim();
+  const parts = [head];
   if (工番) parts.push(String(工番));
   if (job && job['納入先']) parts.push(String(job['納入先']));
   if (job && job['品名'])   parts.push(String(job['品名']));
