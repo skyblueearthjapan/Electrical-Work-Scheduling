@@ -158,10 +158,10 @@ const DataService = (function() {
   /* -------- OkuSchedule -------- */
 
   function createOkuSchedule(payload) {
-    return withLock_(function() {
+    const row = withLock_(function() {
       const id = uuid_();
       const now = nowISO_();
-      const row = {
+      const r = {
         scheduleId: id,
         工番: payload.工番 || '',
         processId: payload.processId || '',
@@ -177,23 +177,56 @@ const DataService = (function() {
         updatedAt: now,
         updatedBy: getCurrentUserEmail_()
       };
-      appendRow_(CONFIG.SHEETS.OKU_SCHEDULE, row);
-      return row;
+      appendRow_(CONFIG.SHEETS.OKU_SCHEDULE, r);
+      return r;
     });
+    // Calendar 同期は lock 外で実行(Calendar API のレイテンシでロックを長く保持しないため)
+    try { pushOkuRowToCalendar(row, 'create'); } catch (e) { Logger.log('[Calendar hook] create: ' + e.message); }
+    return row;
   }
 
   function updateOkuSchedule(id, patch, expectedUpdatedAt) {
-    return withLock_(function() {
+    const result = withLock_(function() {
       return updateRowByKey_(CONFIG.SHEETS.OKU_SCHEDULE, 'scheduleId', id, patch, expectedUpdatedAt);
     });
+    try {
+      const fresh = findOkuRowById_(id);
+      if (fresh) pushOkuRowToCalendar(fresh, 'update');
+    } catch (e) { Logger.log('[Calendar hook] update: ' + e.message); }
+    return result;
   }
 
   function deleteOkuSchedule(id, expectedUpdatedAt) {
-    return withLock_(function() {
+    // 削除前に googleEventId を取得しておく(tombstone 後でも同じ行に残るが念のため)
+    let snapshot = null;
+    try { snapshot = findOkuRowById_(id); } catch (e) {}
+    const result = withLock_(function() {
       // Tombstone (論理削除) for Calendar sync reconciliation
       return updateRowByKey_(CONFIG.SHEETS.OKU_SCHEDULE, 'scheduleId', id,
         { deletedAt: nowISO_() }, expectedUpdatedAt);
     });
+    try {
+      if (snapshot) pushOkuRowToCalendar(snapshot, 'delete');
+    } catch (e) { Logger.log('[Calendar hook] delete: ' + e.message); }
+    return result;
+  }
+
+  /** scheduleId で OkuSchedule 行を1件取得(Calendar 同期用) */
+  function findOkuRowById_(id) {
+    const sh = getSheetByName_(CONFIG.SHEETS.OKU_SCHEDULE);
+    const data = sh.getDataRange().getValues();
+    if (data.length < 2) return null;
+    const headers = data[0];
+    const idIdx = headers.indexOf('scheduleId');
+    if (idIdx === -1) return null;
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][idIdx]) === String(id)) {
+        const obj = {};
+        headers.forEach(function(h, k) { obj[h] = data[i][k]; });
+        return obj;
+      }
+    }
+    return null;
   }
 
   /* -------- ContractorSchedule -------- */
