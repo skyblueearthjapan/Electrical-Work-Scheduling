@@ -457,6 +457,54 @@ input:focus, select:focus, textarea:focus {
 }
 
 
+.memo-readonly {
+  width: 100%;
+  min-height: 18vh;
+  max-height: 50vh;
+  overflow-y: auto;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-base);
+  border-left: 3px solid var(--accent-gold);
+  border-radius: 6px;
+  padding: 12px 14px;
+  margin: 0 0 10px;
+  font-family: 'Noto Sans JP', monospace;
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+.task-section-readonly .memo-readonly {
+  min-height: 60vh;
+}
+
+.memo-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 20px;
+  background: var(--bg-panel-alt);
+  border-bottom: 1px solid var(--border-base);
+  font-size: 12px;
+  color: var(--text-secondary);
+  flex-wrap: wrap;
+}
+.memo-filter-bar select {
+  padding: 4px 8px;
+  font-size: 12px;
+  min-width: 70px;
+}
+.memo-filter-bar .filter-label {
+  font-weight: 600;
+  color: var(--text-gold);
+}
+.memo-filter-bar .filter-count {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.memo-list-body { padding: 12px 16px; }
+
 /* (legacy single-textarea layout — kept for fallback) */
 #daily-memo-textarea {
   width: 100%;

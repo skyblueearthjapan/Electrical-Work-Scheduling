@@ -211,9 +211,9 @@ function api_getDailyMemo(date) {
   return DataService.getDailyMemo(date);
 }
 
-function api_saveDailyMemo(date, text) {
+function api_saveDailyMemo(date, text, preview) {
   requireEditor_();
-  return DataService.saveDailyMemo(date, text);
+  return DataService.saveDailyMemo(date, text, preview);
 }
 
 function api_listDailyMemos() {

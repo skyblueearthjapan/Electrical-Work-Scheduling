@@ -63,7 +63,7 @@ const CONFIG = {
     SCHEMA_VERSION: ['version', 'appliedAt', 'note'],
     AUDIT_LOG: ['timestamp', 'email', 'action', 'params', 'result'],
     GANTT_OKU_ROWS: ['rowId', '工番', 'sortOrder', 'createdAt', 'updatedAt', 'updatedBy'],
-    DAILY_MEMO: ['date', 'text', 'updatedAt', 'updatedBy']
+    DAILY_MEMO: ['date', 'text', 'preview', 'updatedAt', 'updatedBy']
   },
 
   INITIAL_PROCESSES: [

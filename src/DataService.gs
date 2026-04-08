@@ -399,19 +399,24 @@ const DataService = (function() {
     let sh;
     try {
       sh = getDataSS_().getSheetByName(CONFIG.SHEETS.DAILY_MEMO);
-      if (!sh) return { date: date, text: '' };
-    } catch (e) { return { date: date, text: '' }; }
+      if (!sh) return { date: date, text: '', preview: '' };
+    } catch (e) { return { date: date, text: '', preview: '' }; }
     const data = sh.getDataRange().getValues();
-    if (data.length < 2) return { date: date, text: '' };
+    if (data.length < 2) return { date: date, text: '', preview: '' };
     const headers = data[0];
     const dIdx = headers.indexOf('date');
     const tIdx = headers.indexOf('text');
+    const pIdx = headers.indexOf('preview');
     for (let i = 1; i < data.length; i++) {
       if (String(data[i][dIdx]) === String(date)) {
-        return { date: date, text: String(data[i][tIdx] || '') };
+        return {
+          date: date,
+          text: String(data[i][tIdx] || ''),
+          preview: pIdx !== -1 ? String(data[i][pIdx] || '') : ''
+        };
       }
     }
-    return { date: date, text: '' };
+    return { date: date, text: '', preview: '' };
   }
 
   function listDailyMemos() {
@@ -425,14 +430,17 @@ const DataService = (function() {
     const headers = data[0];
     const dIdx = headers.indexOf('date');
     const tIdx = headers.indexOf('text');
+    const pIdx = headers.indexOf('preview');
     const uaIdx = headers.indexOf('updatedAt');
     const out = [];
     for (let i = 1; i < data.length; i++) {
       const text = String(data[i][tIdx] || '');
-      if (!text.trim()) continue; // skip empty
+      const preview = pIdx !== -1 ? String(data[i][pIdx] || '') : '';
+      const display = preview || text;
+      if (!display.trim()) continue; // skip empty
       out.push({
         date: String(data[i][dIdx] || ''),
-        preview: text.substring(0, 80).replace(/\s+/g, ' '),
+        preview: display.substring(0, 120).replace(/\s+/g, ' '),
         updatedAt: uaIdx !== -1 ? String(data[i][uaIdx] || '') : ''
       });
     }
@@ -440,12 +448,13 @@ const DataService = (function() {
     return out;
   }
 
-  function saveDailyMemo(date, text) {
+  function saveDailyMemo(date, text, preview) {
     return withLock_(function() {
       const sh = getSheetByName_(CONFIG.SHEETS.DAILY_MEMO);
       const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
       const dIdx = headers.indexOf('date');
       const tIdx = headers.indexOf('text');
+      const pIdx = headers.indexOf('preview');
       const uaIdx = headers.indexOf('updatedAt');
       const ubIdx = headers.indexOf('updatedBy');
       const now = nowISO_();
@@ -454,21 +463,23 @@ const DataService = (function() {
       for (let i = 1; i < data.length; i++) {
         if (String(data[i][dIdx]) === String(date)) {
           sh.getRange(i + 1, tIdx + 1).setValue(text);
+          if (pIdx !== -1) sh.getRange(i + 1, pIdx + 1).setValue(preview || '');
           if (uaIdx !== -1) sh.getRange(i + 1, uaIdx + 1).setValue(now);
           if (ubIdx !== -1) sh.getRange(i + 1, ubIdx + 1).setValue(email);
-          return { date: date, text: text, updatedAt: now };
+          return { date: date, text: text, preview: preview || '', updatedAt: now };
         }
       }
       // append new
       const row = headers.map(function(h) {
         if (h === 'date') return date;
         if (h === 'text') return text;
+        if (h === 'preview') return preview || '';
         if (h === 'updatedAt') return now;
         if (h === 'updatedBy') return email;
         return '';
       });
       sh.appendRow(row);
-      return { date: date, text: text, updatedAt: now };
+      return { date: date, text: text, preview: preview || '', updatedAt: now };
     });
   }
 

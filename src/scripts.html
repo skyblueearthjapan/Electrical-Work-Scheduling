@@ -1428,6 +1428,43 @@ const DailyMemoModal = {
   _saveTimer: null,
   _currentDate: null,
 
+  /** 構造化された短期目標+本日のタスクから読取専用プレビュー文字列を生成 */
+  _buildStructuredPreview() {
+    const goals = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-goal' && !t['isDone'])
+      .sort((a, b) => String(a['dueDate']||'9999').localeCompare(String(b['dueDate']||'9999')));
+    const tasks = Store.state.todos
+      .filter(t => (t['scopeType'] === 'oku-task' || t['scopeType'] === 'oku-today') && !t['isDone'])
+      .sort((a, b) => (a['sortOrder']||0) - (b['sortOrder']||0));
+
+    let s = '🎯 短期目標:\n';
+    if (goals.length === 0) {
+      s += '  (なし)\n';
+    } else {
+      goals.forEach(g => {
+        const due = g['dueDate'] ? `[期日:${g['dueDate']}]` : '';
+        s += `  ☐ ${g['text']||''} ${due}\n`.replace(/\s+$/, '\n');
+      });
+    }
+    s += '\n📋 本日のタスク:\n';
+    if (tasks.length === 0) {
+      s += '  (なし)\n';
+    } else {
+      tasks.forEach((t, i) => {
+        const code = (i < 20) ? String.fromCodePoint(0x2460 + i) : '(' + (i+1) + ')';
+        s += `  ${code} ${t['text']||''}\n`;
+      });
+    }
+    return s;
+  },
+
+  /** 完全プレビュー(構造化部 + 自由メモ部)— DailyMemo の preview 列に保存 */
+  _buildFullPreview(userMemo) {
+    const struct = this._buildStructuredPreview();
+    const memoText = (userMemo || '').trim();
+    return struct + '\n📝 メモ:\n' + (memoText ? memoText.split('\n').map(l => '  ' + l).join('\n') : '  (なし)') + '\n';
+  },
+
   async open(date) {
     if (!date) date = Store.state.today;
     this._currentDate = date;
@@ -1438,25 +1475,18 @@ const DailyMemoModal = {
       ? `${parsed.getFullYear()}年${parsed.getMonth()+1}月${parsed.getDate()}日(${Utils.dow(date)})`
       : date;
     const isToday = date === Store.state.today;
+    const isPast  = date < Store.state.today;
 
-    modal.innerHTML = `
-      <div class="modal-header">
-        <div class="modal-title" id="memo-title">📓 ${isToday ? '本日' : ''}のタスク — ${titleDate}</div>
-        <div style="display:flex;align-items:center;gap:10px;">
-          <span id="memo-save-status" class="memo-save-status">読込中…</span>
-          <button class="modal-close" onclick="DailyMemoModal.close()">×</button>
-        </div>
-      </div>
-      <div class="memo-toolbar">
-        <button class="btn-ghost memo-nav-btn" id="memo-prev" title="前日">◀</button>
-        <input type="date" id="memo-date-picker" value="${date}">
-        <button class="btn-ghost memo-nav-btn" id="memo-next" title="翌日">▶</button>
-        <button class="btn-ghost memo-nav-btn" id="memo-today-btn" title="本日へ">本日</button>
-        <div style="flex:1"></div>
-        <button class="btn-ghost" id="memo-list-btn" title="過去メモ一覧">📋 過去メモ一覧</button>
-      </div>
-      <div class="modal-body daily-memo-body">
-
+    const headerLabel = isPast ? '📓 過去のタスク' : (isToday ? '📓 本日のタスク' : '📓 タスクメモ');
+    const bodyHtml = isPast
+      ? `
+        <section class="task-section task-section-readonly">
+          <h3 class="task-section-title">📜 ${titleDate} の記録(閲覧のみ)</h3>
+          <p class="task-section-hint">過去日のため編集できません。</p>
+          <pre id="memo-readonly-pre" class="memo-readonly">読込中…</pre>
+        </section>
+      `
+      : `
         <section class="task-section task-section-goals">
           <h3 class="task-section-title">🎯 短期目標</h3>
           <p class="task-section-hint">期日付きの目標。チェックで完了し消えます(完了するまで毎日繰り越し)。</p>
@@ -1479,13 +1509,33 @@ const DailyMemoModal = {
         </section>
 
         <section class="task-section task-section-memo">
-          <h3 class="task-section-title">📝 自由メモ — <span id="memo-section-date">${titleDate}</span></h3>
-          <p class="task-section-hint">この日付専用の自由記入欄。自動保存されます。</p>
+          <h3 class="task-section-title">📝 統合プレビュー & 自由メモ — <span id="memo-section-date">${titleDate}</span></h3>
+          <p class="task-section-hint">上の枠は構造化セクションのライブプレビュー(読取専用)。下の枠だけが編集・保存できます。</p>
+          <pre id="memo-preview-pre" class="memo-readonly">(プレビュー)</pre>
           <textarea id="daily-memo-textarea"
             placeholder="読み込み中..."
             spellcheck="false"></textarea>
         </section>
+      `;
 
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title" id="memo-title">${headerLabel} — ${titleDate}</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span id="memo-save-status" class="memo-save-status">読込中…</span>
+          <button class="modal-close" onclick="DailyMemoModal.close()">×</button>
+        </div>
+      </div>
+      <div class="memo-toolbar">
+        <button class="btn-ghost memo-nav-btn" id="memo-prev" title="前日">◀</button>
+        <input type="date" id="memo-date-picker" value="${date}">
+        <button class="btn-ghost memo-nav-btn" id="memo-next" title="翌日">▶</button>
+        <button class="btn-ghost memo-nav-btn" id="memo-today-btn" title="本日へ">本日</button>
+        <div style="flex:1"></div>
+        <button class="btn-ghost" id="memo-list-btn" title="過去メモ一覧">📋 過去メモ一覧</button>
+      </div>
+      <div class="modal-body daily-memo-body">
+        ${bodyHtml}
       </div>
       <div class="modal-footer">
         <span class="memo-hint">編集 1.5 秒後に自動保存されます</span>
@@ -1502,6 +1552,24 @@ const DailyMemoModal = {
       if (e.target.value) this.gotoDate(e.target.value);
     });
     document.getElementById('memo-list-btn').addEventListener('click', () => this.openList());
+
+    // Past view: load saved snapshot only and exit
+    if (isPast) {
+      const status = document.getElementById('memo-save-status');
+      const pre = document.getElementById('memo-readonly-pre');
+      try {
+        const r = await API.call('api_getDailyMemo', date);
+        const display = (r && (r.preview || r.text)) || '';
+        pre.textContent = display || '(この日のメモはありません)';
+        status.textContent = '閲覧のみ';
+        status.className = 'memo-save-status';
+      } catch (err) {
+        pre.textContent = '読込エラー: ' + err.message;
+        status.textContent = '✕ 読込失敗';
+        status.className = 'memo-save-status error';
+      }
+      return;
+    }
 
     // Structured tasks/goals
     this.renderTaskLists();
@@ -1555,13 +1623,16 @@ const DailyMemoModal = {
       status.className = 'memo-save-status error';
     }
 
-    // 2) 編集 → debounce 自動保存
+    // 2) 編集 → debounce 自動保存 + プレビュー枠を即時更新
     const debouncedSave = Utils.debounce(() => this.save(), 1500);
     ta.addEventListener('input', () => {
       status.textContent = '● 未保存';
       status.className = 'memo-save-status unsaved';
+      this._refreshPreviewPane();
       debouncedSave();
     });
+    // 初回プレビュー
+    this._refreshPreviewPane();
 
     // 3) Enter キーで丸数字を自動継続(①②③ → ④⑤⑥…)
     ta.addEventListener('keydown', (e) => {
@@ -1616,10 +1687,11 @@ const DailyMemoModal = {
     const status = document.getElementById('memo-save-status');
     if (!ta || !this._currentDate) return;
     const text = ta.value;
+    const preview = this._buildFullPreview(text);
     status.textContent = '⟳ 保存中…';
     status.className = 'memo-save-status saving';
     try {
-      await API.call('api_saveDailyMemo', this._currentDate, text);
+      await API.call('api_saveDailyMemo', this._currentDate, text, preview);
       status.textContent = '✓ 保存済み';
       status.className = 'memo-save-status saved';
     } catch (err) {
@@ -1627,6 +1699,14 @@ const DailyMemoModal = {
       status.className = 'memo-save-status error';
       UI.toast('保存エラー: ' + err.message, 'error');
     }
+  },
+
+  /** ライブプレビュー枠を再描画(構造化セクションが変わった時に呼ぶ) */
+  _refreshPreviewPane() {
+    const pre = document.getElementById('memo-preview-pre');
+    if (!pre) return;
+    const ta = document.getElementById('daily-memo-textarea');
+    pre.textContent = this._buildFullPreview(ta ? ta.value : '');
   },
 
   async close() {
@@ -1692,6 +1772,15 @@ const DailyMemoModal = {
       taskList.appendChild(empty);
     } else {
       tasks.forEach((t, i) => taskList.appendChild(this.buildTaskItem(t, false, i + 1)));
+    }
+
+    // 構造化セクションが変わったらライブプレビュー枠も更新し、
+    // DailyMemo の preview スナップショットも保存し直す
+    this._refreshPreviewPane();
+    if (this._currentDate === Store.state.today) {
+      // 即時ではなく軽くdebounceして連続更新を吸収
+      clearTimeout(this._structSaveTimer);
+      this._structSaveTimer = setTimeout(() => this.save(), 800);
     }
   },
 
@@ -1803,7 +1892,7 @@ const DailyMemoModal = {
     this.openList();
   },
 
-  /** 過去メモ一覧モーダルを開く */
+  /** 過去メモ一覧モーダルを開く(年/月/日プルダウンでフィルタ可能) */
   async openList() {
     // Save current before switching view
     const status = document.getElementById('memo-save-status');
@@ -1820,11 +1909,23 @@ const DailyMemoModal = {
         <div class="modal-title">📋 過去のタスクメモ一覧</div>
         <button class="modal-close" onclick="UI.closeModal()">×</button>
       </div>
-      <div class="modal-body">
+      <div class="memo-filter-bar">
+        <span class="filter-label">フィルタ:</span>
+        <select id="filter-year"><option value="">全年</option></select>
+        <span>年</span>
+        <select id="filter-month"><option value="">全月</option></select>
+        <span>月</span>
+        <select id="filter-day"><option value="">全日</option></select>
+        <span>日</span>
+        <button class="btn-ghost" id="filter-clear">クリア</button>
+        <div style="flex:1"></div>
+        <span id="filter-count" class="filter-count"></span>
+      </div>
+      <div class="modal-body memo-list-body">
         <div id="memo-list-loading" style="padding:20px;text-align:center;color:var(--text-muted)">読込中…</div>
         <ul id="memo-list-ul" class="memo-list" style="display:none"></ul>
         <div id="memo-list-empty" style="display:none;padding:40px;text-align:center;color:var(--text-muted)">
-          まだ保存されたメモがありません
+          条件に一致するメモがありません
         </div>
       </div>
       <div class="modal-footer">
@@ -1836,16 +1937,49 @@ const DailyMemoModal = {
       this.open(returnDate || Store.state.today);
     });
 
-    try {
-      const memos = await API.call('api_listDailyMemos');
-      document.getElementById('memo-list-loading').style.display = 'none';
-      const ul = document.getElementById('memo-list-ul');
-      if (!memos || memos.length === 0) {
-        document.getElementById('memo-list-empty').style.display = 'block';
+    // Populate month / day pulldowns
+    const monthSel = document.getElementById('filter-month');
+    for (let m = 1; m <= 12; m++) {
+      const o = document.createElement('option');
+      o.value = String(m);
+      o.textContent = String(m);
+      monthSel.appendChild(o);
+    }
+    const daySel = document.getElementById('filter-day');
+    for (let d = 1; d <= 31; d++) {
+      const o = document.createElement('option');
+      o.value = String(d);
+      o.textContent = String(d);
+      daySel.appendChild(o);
+    }
+
+    let allMemos = [];
+    const ul = document.getElementById('memo-list-ul');
+    const emptyEl = document.getElementById('memo-list-empty');
+    const countEl = document.getElementById('filter-count');
+
+    const renderFiltered = () => {
+      const fy = document.getElementById('filter-year').value;
+      const fm = document.getElementById('filter-month').value;
+      const fd = document.getElementById('filter-day').value;
+      const filtered = allMemos.filter(m => {
+        const p = Utils.parseDate(m.date);
+        if (!p) return false;
+        if (fy && String(p.getFullYear()) !== fy) return false;
+        if (fm && String(p.getMonth() + 1) !== fm) return false;
+        if (fd && String(p.getDate()) !== fd) return false;
+        return true;
+      });
+      countEl.textContent = filtered.length + ' 件';
+      ul.innerHTML = '';
+      if (filtered.length === 0) {
+        emptyEl.style.display = 'block';
+        ul.style.display = 'none';
         return;
       }
+      emptyEl.style.display = 'none';
       ul.style.display = 'block';
-      memos.forEach(m => {
+      filtered.forEach(m => {
         const li = document.createElement('li');
         li.className = 'memo-list-item';
         const parsed = Utils.parseDate(m.date);
@@ -1871,14 +2005,85 @@ const DailyMemoModal = {
 
         li.appendChild(head);
         li.appendChild(preview);
-        li.addEventListener('click', () => {
-          UI.closeModal();
-          this.open(m.date);
-        });
+        li.addEventListener('click', () => this.openPreviewOnly(m.date, returnDate));
         ul.appendChild(li);
       });
+    };
+
+    document.getElementById('filter-year').addEventListener('change', renderFiltered);
+    monthSel.addEventListener('change', renderFiltered);
+    daySel.addEventListener('change', renderFiltered);
+    document.getElementById('filter-clear').addEventListener('click', () => {
+      document.getElementById('filter-year').value = '';
+      monthSel.value = '';
+      daySel.value = '';
+      renderFiltered();
+    });
+
+    try {
+      allMemos = (await API.call('api_listDailyMemos')) || [];
+      document.getElementById('memo-list-loading').style.display = 'none';
+      // Populate year pulldown from data
+      const yearSel = document.getElementById('filter-year');
+      const years = Array.from(new Set(allMemos.map(m => {
+        const p = Utils.parseDate(m.date);
+        return p ? p.getFullYear() : null;
+      }).filter(y => y !== null))).sort((a, b) => b - a);
+      // Always include current year as fallback
+      const cy = new Date().getFullYear();
+      if (!years.includes(cy)) years.unshift(cy);
+      years.forEach(y => {
+        const o = document.createElement('option');
+        o.value = String(y);
+        o.textContent = String(y);
+        yearSel.appendChild(o);
+      });
+
+      if (allMemos.length === 0) {
+        emptyEl.textContent = 'まだ保存されたメモがありません';
+        emptyEl.style.display = 'block';
+        countEl.textContent = '0 件';
+        return;
+      }
+      renderFiltered();
     } catch (err) {
       document.getElementById('memo-list-loading').textContent = '読込エラー: ' + err.message;
+    }
+  },
+
+  /** 過去メモを読取専用でプレビュー(編集不可) */
+  async openPreviewOnly(date, returnDate) {
+    UI.closeModal();
+    const modal = UI.openModal();
+    modal.classList.add('modal-tall');
+    const parsed = Utils.parseDate(date);
+    const titleDate = parsed
+      ? `${parsed.getFullYear()}年${parsed.getMonth()+1}月${parsed.getDate()}日(${Utils.dow(date)})`
+      : date;
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">📜 ${titleDate} のメモ(閲覧のみ)</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <pre id="memo-preview-content" class="memo-readonly">読込中…</pre>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" id="memo-preview-back">← 一覧へ戻る</button>
+      </div>
+    `;
+    document.getElementById('memo-preview-back').addEventListener('click', () => {
+      UI.closeModal();
+      this._currentDate = returnDate || Store.state.today;
+      this.openList();
+    });
+    try {
+      const r = await API.call('api_getDailyMemo', date);
+      const display = (r && (r.preview || r.text)) || '';
+      document.getElementById('memo-preview-content').textContent =
+        display || '(この日のメモはありません)';
+    } catch (err) {
+      document.getElementById('memo-preview-content').textContent = '読込エラー: ' + err.message;
     }
   }
 };
