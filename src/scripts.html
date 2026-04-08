@@ -430,18 +430,22 @@ const Gantt = {
     const days = Store.state.ganttDays;
     const dates = Utils.genDateRange(start, days);
 
-    this.renderHeader('gantt-oku-header', dates, true /* clickable */);
-    this.renderHeader('gantt-ctr-header', dates, false);
+    this.renderHeader('gantt-oku-header', dates, true /* clickable */, true /* hasJobInfo */);
+    this.renderHeader('gantt-ctr-header', dates, false, false);
     this.renderOkuBody(dates);
     this.renderContractorBody(dates);
     this.syncScroll();
   },
 
-  renderHeader(elId, dates, clickable) {
+  renderHeader(elId, dates, clickable, hasJobInfo) {
     const el = document.getElementById(elId);
     if (!el) return;
     el.innerHTML = '';
     const today = Store.state.today;
+    // ボディ行の左ラベル(220px)と同じ幅のスペーサーを先頭に置いて列をそろえる
+    const leftSpacer = document.createElement('div');
+    leftSpacer.className = 'gantt-header-spacer-left';
+    el.appendChild(leftSpacer);
     dates.forEach(d => {
       const cell = document.createElement('div');
       cell.className = 'gantt-date-cell';
@@ -470,8 +474,14 @@ const Gantt = {
       cell.appendChild(wSpan);
       el.appendChild(cell);
     });
-    // width
-    el.style.minWidth = (dates.length * 32 + 460) + 'px';
+    // 奥氏側だけ右に 工番情報パネル(240px) のスペーサー
+    if (hasJobInfo) {
+      const rightSpacer = document.createElement('div');
+      rightSpacer.className = 'gantt-header-spacer-right';
+      el.appendChild(rightSpacer);
+    }
+    // width: 220(left label) + dates*32 (+ 240 if oku)
+    el.style.minWidth = (dates.length * 32 + 220 + (hasJobInfo ? 240 : 0)) + 'px';
   },
 
   renderOkuBody(dates) {

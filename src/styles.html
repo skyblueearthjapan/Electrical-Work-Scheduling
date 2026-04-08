@@ -706,6 +706,26 @@ input:focus, select:focus, textarea:focus {
   border-bottom: 2px solid var(--border-strong);
   min-width: 100%;
 }
+/* ヘッダ行の左右スペーサー — ボディ行のラベル/工番情報と同じ幅で
+   日付セルの位置をボディと完全一致させる */
+.gantt-header-spacer-left {
+  position: sticky;
+  left: 0;
+  z-index: 11;
+  flex-shrink: 0;
+  width: 220px;
+  background: var(--bg-panel-alt);
+  border-right: 2px solid var(--border-strong);
+}
+.gantt-header-spacer-right {
+  position: sticky;
+  right: 0;
+  z-index: 11;
+  flex-shrink: 0;
+  width: 240px;
+  background: var(--bg-panel-alt);
+  border-left: 2px solid var(--border-strong);
+}
 
 .gantt-date-cell {
   flex-shrink: 0;
