@@ -10,6 +10,12 @@
 const CONFIG = {
   SCHEMA_VERSION: '1.0.0',
 
+  // このドメインのユーザーは Permissions シート未登録でも自動的に editor として扱う。
+  // 明示的に Permissions シートに行がある場合はそちらが優先される(viewer 降格や
+  // isActive=false による無効化が可能)。空文字にすると自動許可を無効化できる。
+  AUTO_ALLOW_DOMAIN: 'lineworks-local.info',
+  AUTO_ALLOW_ROLE: 'editor',
+
   SHEETS: {
     OKU_SCHEDULE: 'OkuSchedule',
     CONTRACTOR_SCHEDULE: 'ContractorSchedule',

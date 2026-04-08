@@ -51,22 +51,38 @@ function getCurrentUserEmail_() {
 
 function getUserRole_(email) {
   if (!email) return 'none';
+  // 1) Permissions シートの明示登録を最優先(isActive=false で明示無効化も可能)
+  let explicitActive = null;   // true / false / null(行なし)
+  let explicitRole = null;
   try {
     const sh = getSheet_(CONFIG.SHEETS.PERMISSIONS);
     const data = sh.getDataRange().getValues();
-    if (data.length < 2) return 'none';
-    const headers = data[0];
-    const idxEmail = headers.indexOf('email');
-    const idxRole = headers.indexOf('role');
-    const idxActive = headers.indexOf('isActive');
-    for (let i = 1; i < data.length; i++) {
-      const e = String(data[i][idxEmail] || '').toLowerCase().trim();
-      if (e === email && data[i][idxActive] === true) {
-        return String(data[i][idxRole] || 'viewer');
+    if (data.length >= 2) {
+      const headers = data[0];
+      const idxEmail = headers.indexOf('email');
+      const idxRole = headers.indexOf('role');
+      const idxActive = headers.indexOf('isActive');
+      for (let i = 1; i < data.length; i++) {
+        const e = String(data[i][idxEmail] || '').toLowerCase().trim();
+        if (e === email) {
+          explicitActive = (data[i][idxActive] === true);
+          explicitRole = String(data[i][idxRole] || 'viewer');
+          break;
+        }
       }
     }
   } catch (err) {
     Logger.log('getUserRole_ error: ' + err.message);
+  }
+  if (explicitActive === true) return explicitRole;
+  if (explicitActive === false) return 'none';  // 明示無効化
+  // 2) ドメイン自動許可(Permissions シート未登録のとき)
+  const autoDomain = (CONFIG.AUTO_ALLOW_DOMAIN || '').toLowerCase().trim();
+  if (autoDomain) {
+    const at = email.indexOf('@');
+    if (at !== -1 && email.substring(at + 1) === autoDomain) {
+      return CONFIG.AUTO_ALLOW_ROLE || 'editor';
+    }
   }
   return 'none';
 }
