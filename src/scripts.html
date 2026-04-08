@@ -1237,7 +1237,15 @@ const OkuCalendar = {
         const s = Store.state.okuSchedules.find(x => x['scheduleId'] === info.event.id);
         if (s) OkuModal.openEdit(s);
       },
-      events: () => this.toFcEvents()
+      // FullCalendar v6 公式: callback 形式が必須
+      // (アロー関数 + 同期 return では refetchEvents 後に UI 更新されない)
+      events: function(info, successCallback, failureCallback) {
+        try {
+          successCallback(OkuCalendar.toFcEvents());
+        } catch (e) {
+          failureCallback(e);
+        }
+      }
     });
     cal.render();
     Store.state.okuCalendar = cal;
@@ -1375,7 +1383,14 @@ const ContractorCalendar = {
         const s = Store.state.contractorSchedules.find(x => x['scheduleId'] === info.event.id);
         if (s) ContractorModal.openEdit(s);
       },
-      events: () => this.toFcEvents(contractorId)
+      // FullCalendar v6 公式: callback 形式必須
+      events: function(info, successCallback, failureCallback) {
+        try {
+          successCallback(ContractorCalendar.toFcEvents(contractorId));
+        } catch (e) {
+          failureCallback(e);
+        }
+      }
     });
     cal.render();
     Store.state.contractorCalendars[contractorId] = cal;
