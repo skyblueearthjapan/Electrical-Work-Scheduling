@@ -1222,11 +1222,12 @@ const ContractorCalendar = {
 
     Store.state.contractors.forEach((c) => {
       const tabName = 'ctr-' + c['contractorId'];
-      // Top-level tab button
+      // Top-level tab button (compact for contractors)
       const btn = document.createElement('button');
-      btn.className = 'tab-link';
+      btn.className = 'tab-link tab-link-compact';
       btn.dataset.tab = tabName;
       btn.dataset.contractor = '1';
+      btn.title = c['業者名']; // 正式名称はホバーで確認
       btn.addEventListener('click', () => App.switchTab(tabName));
       const dot = document.createElement('span');
       dot.className = 'color-dot';
@@ -1234,7 +1235,7 @@ const ContractorCalendar = {
         'display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;background:' +
         (c['識別色'] || '#999');
       const tx = document.createElement('span');
-      tx.textContent = c['業者名'];
+      tx.textContent = c['短縮名'] || c['業者名'];
       btn.appendChild(dot);
       btn.appendChild(tx);
       nav.appendChild(btn);

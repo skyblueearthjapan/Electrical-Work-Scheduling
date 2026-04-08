@@ -207,6 +207,54 @@ function setupAll() {
 }
 
 /**
+ * 業者マスタの 短縮名 と 坂野電気の識別色 を一括反映するマイグレーション。
+ * 1回だけ実行すればOK。
+ */
+function migrateContractorShortName() {
+  const sh = getSheet_(CONFIG.SHEETS.CONTRACTORS);
+  const data = sh.getDataRange().getValues();
+  if (data.length < 2) {
+    Logger.log('業者マスタが空です');
+    return;
+  }
+  const headers = data[0];
+  const idxName  = headers.indexOf('業者名');
+  const idxShort = headers.indexOf('短縮名');
+  const idxColor = headers.indexOf('識別色');
+  if (idxShort === -1) {
+    Logger.log('✗ 短縮名 列がありません。先に setupInitialSheets() を実行してください。');
+    return;
+  }
+
+  // 業者名 → 推奨短縮名 のマップ
+  const shortMap = {
+    'H・Y・Tシステム':            'HYT',
+    '有限会社サンスイ':           'サンスイ',
+    '坂野電気工業所':             '坂野',
+    '株式会社内山電機製作所':     '内山',
+    '株式会社桜井電装':           '桜井',
+    'RCエンジニアリング株式会社': 'RC'
+  };
+
+  let updated = 0;
+  for (let i = 1; i < data.length; i++) {
+    const name = String(data[i][idxName] || '');
+    // 短縮名 セット(空の場合のみ)
+    if (!data[i][idxShort] && shortMap[name]) {
+      sh.getRange(i + 1, idxShort + 1).setValue(shortMap[name]);
+      updated++;
+    }
+    // 坂野電気工業所 の識別色を黄色に変更
+    if (name === '坂野電気工業所' && idxColor !== -1) {
+      sh.getRange(i + 1, idxColor + 1).setValue('#FACC15');
+      Logger.log('✓ 坂野電気工業所 の識別色を #FACC15(黄色)に更新');
+    }
+  }
+  Logger.log('✓ 短縮名 を ' + updated + ' 件設定');
+  Logger.log('完了。WebApp を更新ボタンで再読込してください。');
+}
+
+/**
  * Calendar同期トリガー設置(Phase 5)
  */
 function installCalendarSyncTrigger() {

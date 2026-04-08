@@ -43,7 +43,7 @@ const CONFIG = {
     ],
     CONTRACTORS: [
       'contractorId', '業者名', '担当者', '電話番号', 'メール',
-      '識別色', '表示順', '有効', '備考'
+      '識別色', '表示順', '有効', '備考', '短縮名'
     ],
     TODO_LIST: [
       'todoId', 'scopeType', 'contractorId', 'text', 'isDone',
@@ -74,7 +74,7 @@ const CONFIG = {
   INITIAL_CONTRACTORS: [
     { name: 'H・Y・Tシステム',              color: '#60A5FA' },
     { name: '有限会社サンスイ',              color: '#10B981' },
-    { name: '坂野電気工業所',                color: '#F59E0B' },
+    { name: '坂野電気工業所',                color: '#FACC15' },
     { name: '株式会社内山電機製作所',        color: '#8B5CF6' },
     { name: '株式会社桜井電装',              color: '#EC4899' },
     { name: 'RCエンジニアリング株式会社',    color: '#22D3EE' }
