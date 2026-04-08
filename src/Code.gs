@@ -216,6 +216,11 @@ function api_saveDailyMemo(date, text) {
   return DataService.saveDailyMemo(date, text);
 }
 
+function api_listDailyMemos() {
+  requireViewer_();
+  return DataService.listDailyMemos();
+}
+
 /* -------- JobsCache refresh -------- */
 
 function api_refreshJobsCache() {

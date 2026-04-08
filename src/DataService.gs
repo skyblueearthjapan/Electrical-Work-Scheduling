@@ -414,6 +414,32 @@ const DataService = (function() {
     return { date: date, text: '' };
   }
 
+  function listDailyMemos() {
+    let sh;
+    try {
+      sh = getDataSS_().getSheetByName(CONFIG.SHEETS.DAILY_MEMO);
+      if (!sh) return [];
+    } catch (e) { return []; }
+    const data = sh.getDataRange().getValues();
+    if (data.length < 2) return [];
+    const headers = data[0];
+    const dIdx = headers.indexOf('date');
+    const tIdx = headers.indexOf('text');
+    const uaIdx = headers.indexOf('updatedAt');
+    const out = [];
+    for (let i = 1; i < data.length; i++) {
+      const text = String(data[i][tIdx] || '');
+      if (!text.trim()) continue; // skip empty
+      out.push({
+        date: String(data[i][dIdx] || ''),
+        preview: text.substring(0, 80).replace(/\s+/g, ' '),
+        updatedAt: uaIdx !== -1 ? String(data[i][uaIdx] || '') : ''
+      });
+    }
+    out.sort(function(a, b) { return String(b.date).localeCompare(String(a.date)); });
+    return out;
+  }
+
   function saveDailyMemo(date, text) {
     return withLock_(function() {
       const sh = getSheetByName_(CONFIG.SHEETS.DAILY_MEMO);
@@ -512,6 +538,7 @@ const DataService = (function() {
     reorderGanttOkuRows: reorderGanttOkuRows,
     getDailyMemo: getDailyMemo,
     saveDailyMemo: saveDailyMemo,
+    listDailyMemos: listDailyMemos,
     createOkuSchedule: createOkuSchedule,
     updateOkuSchedule: updateOkuSchedule,
     deleteOkuSchedule: deleteOkuSchedule,
