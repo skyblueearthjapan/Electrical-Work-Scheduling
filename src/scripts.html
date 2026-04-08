@@ -865,6 +865,43 @@ const Gantt = {
     UI.toast(`工番 ${jobNo} を削除しました`, 'success');
   },
 
+  /** 業者ガントから AI 入力する場合の業者選択ピッカー */
+  openContractorAIPicker() {
+    const modal = UI.openModal();
+    modal.classList.add('ai-modal');
+    let optionsHtml = '';
+    Store.state.contractors.forEach(c => {
+      const name = c['業者名'] || '';
+      const dot = c['識別色'] || '#999';
+      optionsHtml += `
+        <button class="ai-picker-item" data-cid="${Utils.escAttr(c['contractorId'])}">
+          <span class="color-dot" style="display:inline-block;width:12px;height:12px;border-radius:50%;background:${Utils.escAttr(dot)};margin-right:8px;vertical-align:middle;"></span>
+          ${Utils.esc(name)}
+        </button>
+      `;
+    });
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">✨ AI 入力 — 業者を選択</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body">
+        <p class="ai-hint">スケジュールを入力する業者を選んでください(登録済みのみ)。</p>
+        <div class="ai-picker-list">${optionsHtml}</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="UI.closeModal()">キャンセル</button>
+      </div>
+    `;
+    modal.querySelectorAll('.ai-picker-item').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const cid = btn.dataset.cid;
+        UI.closeModal();
+        AIScheduleModal.open('contractor', cid);
+      });
+    });
+  },
+
   moveOkuRow(idx, delta) {
     const rows = Store.state.ganttOkuRows;
     const tgt = idx + delta;
@@ -1253,6 +1290,11 @@ const ContractorCalendar = {
         <div class="panel">
           <div class="panel-header">
             <div class="panel-title">${Utils.esc(c['業者名'])}</div>
+            <div class="panel-controls">
+              <button class="btn-task btn-task-ai" data-ai-ctr="${Utils.escAttr(c['contractorId'])}" title="AI で自由文からスケジュール一括投入">
+                ✨ AI入力
+              </button>
+            </div>
           </div>
           <div class="contractor-header">
             <div class="contractor-contact">
@@ -1283,6 +1325,13 @@ const ContractorCalendar = {
           input.value = '';
         }
       });
+      // AI入力ボタン
+      const aiBtn = pane.querySelector('button[data-ai-ctr]');
+      if (aiBtn) {
+        aiBtn.addEventListener('click', () => {
+          AIScheduleModal.open('contractor', c['contractorId']);
+        });
+      }
       container.appendChild(pane);
     });
 
@@ -2443,6 +2492,364 @@ const OkuTaskModal = {
       text: text,
       dueDate: dueDate || ''
     }]);
+  }
+};
+
+/* ================= AIScheduleModal ================= */
+/**
+ * AI で自由文 → スケジュール抽出 → 確認 → 一括投入
+ *
+ * フロー:
+ *  Step1: 入力(scope=oku は業者選択なし、scope=contractor は事前指定済)
+ *  Step2: AI 応答を一覧プレビュー(各行編集可・チェック ON/OFF)
+ *  Step3: チェック ON の行だけを SaveQueue 経由で投入
+ */
+const AIScheduleModal = {
+  _state: null,
+
+  /**
+   * @param {string} scope         'oku' | 'contractor'
+   * @param {string|null} contractorId  scope=contractor の時
+   */
+  open(scope, contractorId) {
+    this._state = {
+      scope: scope,
+      contractorId: contractorId || null,
+      contractorName: '',
+      step: 1,
+      items: []
+    };
+    if (scope === 'contractor' && contractorId) {
+      const c = Store.getContractorById(contractorId);
+      this._state.contractorName = c ? (c['業者名'] || '') : '';
+      // 登録業者チェック
+      if (!c) {
+        UI.toast('登録されていない業者です', 'error');
+        return;
+      }
+    }
+    this._renderStep1();
+  },
+
+  _renderStep1() {
+    const s = this._state;
+    const modal = UI.openModal();
+    modal.classList.add('modal-tall', 'ai-modal');
+    const scopeLabel = s.scope === 'oku'
+      ? '🧑‍💻 奥氏(自社)'
+      : '🏭 ' + (s.contractorName || '(業者未指定)');
+
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">✨ AI スケジュール入力</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="ai-step-bar">
+        <span class="ai-step active">① 入力</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step">② 確認</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step">③ 投入</span>
+      </div>
+      <div class="modal-body ai-modal-body">
+        <div class="ai-scope-row">
+          <label>対象:</label>
+          <span class="ai-scope-badge">${Utils.esc(scopeLabel)}</span>
+        </div>
+        <div class="ai-input-wrap">
+          <label>自由文(複数行可・1行=1件 を推奨)</label>
+          <textarea id="ai-input" placeholder="例:&#10;5/10〜5/15 配線工事 LW25056&#10;明日 試運転 LW24004&#10;来週月曜から3日 デバック LW25099" maxlength="2000"></textarea>
+          <p class="ai-hint">
+            ・日付は M/D / 来週月曜 / 明日 等の表現が認識されます<br>
+            ・工程は工程マスタに正規化されます<br>
+            ・最大 2000 文字。1分間 30 件まで
+          </p>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="UI.closeModal()">キャンセル</button>
+        <div style="flex:1"></div>
+        <button class="btn-primary" id="ai-parse-btn">✨ AI 解析</button>
+      </div>
+    `;
+
+    const ta = document.getElementById('ai-input');
+    setTimeout(() => ta.focus(), 100);
+
+    document.getElementById('ai-parse-btn').addEventListener('click', () => this._doParse());
+  },
+
+  async _doParse() {
+    const ta = document.getElementById('ai-input');
+    const text = (ta.value || '').trim();
+    if (!text) { UI.toast('入力が空です', 'error'); return; }
+
+    const btn = document.getElementById('ai-parse-btn');
+    const original = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = '⟳ 解析中…';
+
+    try {
+      const r = await API.call('api_aiParseSchedules',
+        text, this._state.scope, this._state.contractorId);
+      if (!r || !Array.isArray(r.items) || r.items.length === 0) {
+        UI.toast('スケジュールを抽出できませんでした', 'error');
+        btn.disabled = false;
+        btn.textContent = original;
+        return;
+      }
+      // 各 item に UI 用の include フラグを付与
+      this._state.items = r.items.map((it) => ({
+        include: true,
+        工番: it['工番'] || '',
+        工程名: it['工程名'] || '',
+        start: it['start'] || '',
+        end: it['end'] || '',
+        メモ: it['メモ'] || '',
+        confidence: typeof it['confidence'] === 'number' ? it['confidence'] : 0,
+        ambiguousFields: it['ambiguousFields'] || []
+      }));
+      this._state.globalNotes = r.globalNotes || '';
+      this._renderStep2();
+    } catch (err) {
+      console.error(err);
+      UI.toast('AI 解析エラー: ' + err.message, 'error');
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  },
+
+  _renderStep2() {
+    const s = this._state;
+    const modal = UI.openModal();
+    modal.classList.add('modal-tall', 'ai-modal');
+    const scopeLabel = s.scope === 'oku'
+      ? '🧑‍💻 奥氏(自社)'
+      : '🏭 ' + (s.contractorName || '');
+
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">✨ AI 認識結果(${s.items.length}件)— ${Utils.esc(scopeLabel)}</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="ai-step-bar">
+        <span class="ai-step done">① 入力</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step active">② 確認</span>
+        <span class="ai-step-sep">→</span>
+        <span class="ai-step">③ 投入</span>
+      </div>
+      <div class="modal-body ai-modal-body">
+        <p class="ai-hint">
+          各行の <b>チェックを外すとスキップ</b>。各フィールドは編集可能です。
+          <span class="ai-conf-legend">
+            <span class="ai-conf high"></span>高
+            <span class="ai-conf mid"></span>中
+            <span class="ai-conf low"></span>低
+          </span>
+        </p>
+        <div class="ai-items" id="ai-items"></div>
+        ${s.globalNotes ? `<div class="ai-global-notes">📝 ${Utils.esc(s.globalNotes)}</div>` : ''}
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" id="ai-back-btn">← 入力に戻る</button>
+        <div style="flex:1"></div>
+        <span id="ai-included-count" class="ai-count"></span>
+        <button class="btn-primary" id="ai-commit-btn">✅ 選択した行を投入</button>
+      </div>
+    `;
+
+    document.getElementById('ai-back-btn').addEventListener('click', () => this._renderStep1());
+    document.getElementById('ai-commit-btn').addEventListener('click', () => this._doCommit());
+    this._renderItemsList();
+  },
+
+  _renderItemsList() {
+    const s = this._state;
+    const wrap = document.getElementById('ai-items');
+    if (!wrap) return;
+    wrap.innerHTML = '';
+
+    s.items.forEach((it, idx) => {
+      const row = document.createElement('div');
+      row.className = 'ai-item';
+      const conf = it.confidence;
+      let confClass = 'low';
+      if (conf >= 0.8) confClass = 'high';
+      else if (conf >= 0.6) confClass = 'mid';
+      row.classList.add('conf-' + confClass);
+      if (!it.include) row.classList.add('excluded');
+
+      // Checkbox
+      const cb = document.createElement('input');
+      cb.type = 'checkbox';
+      cb.className = 'ai-item-check';
+      cb.checked = it.include;
+      cb.addEventListener('change', () => {
+        it.include = cb.checked;
+        row.classList.toggle('excluded', !cb.checked);
+        this._updateIncludedCount();
+      });
+
+      // Confidence badge
+      const conf_el = document.createElement('span');
+      conf_el.className = 'ai-conf-badge ai-conf ' + confClass;
+      conf_el.textContent = Math.round(conf * 100) + '%';
+      conf_el.title = '信頼度: ' + (conf * 100).toFixed(0) + '%';
+
+      // Field grid
+      const grid = document.createElement('div');
+      grid.className = 'ai-item-grid';
+      grid.innerHTML = `
+        <label>工番</label>
+        <input type="text" class="ai-f-jn" value="${Utils.escAttr(it.工番)}" placeholder="LW25056">
+        <label>工程</label>
+        <select class="ai-f-proc"></select>
+        <label>開始日</label>
+        <input type="date" class="ai-f-start" value="${Utils.escAttr(it.start)}">
+        <label>終了日</label>
+        <input type="date" class="ai-f-end" value="${Utils.escAttr(it.end)}">
+        <label>メモ</label>
+        <input type="text" class="ai-f-memo" value="${Utils.escAttr(it.メモ)}">
+      `;
+
+      // Process select
+      const procSel = grid.querySelector('.ai-f-proc');
+      const optEmpty = document.createElement('option');
+      optEmpty.value = '';
+      optEmpty.textContent = '-- 未選択 --';
+      procSel.appendChild(optEmpty);
+      Store.state.processes.forEach(p => {
+        const opt = document.createElement('option');
+        opt.value = p['工程名'];
+        opt.textContent = p['工程名'];
+        if (p['工程名'] === it.工程名) opt.selected = true;
+        procSel.appendChild(opt);
+      });
+      // 工程名がマスタ未登録の場合、入力値をそのまま追加
+      if (it.工程名 && !Store.state.processes.some(p => p['工程名'] === it.工程名)) {
+        const opt = document.createElement('option');
+        opt.value = it.工程名;
+        opt.textContent = it.工程名 + ' (未登録)';
+        opt.selected = true;
+        procSel.appendChild(opt);
+      }
+
+      // Bind back to state
+      const bind = (cls, key) => {
+        grid.querySelector(cls).addEventListener('input', (e) => { it[key] = e.target.value; });
+        grid.querySelector(cls).addEventListener('change', (e) => { it[key] = e.target.value; });
+      };
+      bind('.ai-f-jn', '工番');
+      bind('.ai-f-proc', '工程名');
+      bind('.ai-f-start', 'start');
+      bind('.ai-f-end', 'end');
+      bind('.ai-f-memo', 'メモ');
+
+      // Ambiguous fields highlight
+      (it.ambiguousFields || []).forEach(f => {
+        const map = { '工番': '.ai-f-jn', '工程名': '.ai-f-proc', 'start': '.ai-f-start', 'end': '.ai-f-end' };
+        const sel = map[f];
+        if (sel) grid.querySelector(sel).classList.add('ai-field-warning');
+      });
+
+      const head = document.createElement('div');
+      head.className = 'ai-item-head';
+      const numSpan = document.createElement('span');
+      numSpan.className = 'ai-item-num';
+      numSpan.textContent = '#' + (idx + 1);
+      head.appendChild(cb);
+      head.appendChild(numSpan);
+      head.appendChild(conf_el);
+
+      row.appendChild(head);
+      row.appendChild(grid);
+      wrap.appendChild(row);
+    });
+    this._updateIncludedCount();
+  },
+
+  _updateIncludedCount() {
+    const el = document.getElementById('ai-included-count');
+    if (!el) return;
+    const n = this._state.items.filter(i => i.include).length;
+    el.textContent = n + ' / ' + this._state.items.length + ' 件投入予定';
+  },
+
+  async _doCommit() {
+    const s = this._state;
+    const items = s.items.filter(i => i.include);
+    if (items.length === 0) { UI.toast('チェックされた行がありません', 'error'); return; }
+
+    // バリデーション
+    const errors = [];
+    items.forEach((it, i) => {
+      if (!it.工番)   errors.push(`#${i+1}: 工番が空`);
+      if (!it.工程名) errors.push(`#${i+1}: 工程が空`);
+      if (!it.start)  errors.push(`#${i+1}: 開始日が空`);
+      if (!it.end)    errors.push(`#${i+1}: 終了日が空`);
+    });
+    if (errors.length > 0) {
+      UI.toast('入力エラー: ' + errors.slice(0, 3).join(' / '), 'error');
+      return;
+    }
+
+    const btn = document.getElementById('ai-commit-btn');
+    btn.disabled = true;
+    btn.textContent = '⟳ 投入中…';
+
+    let injected = 0;
+    items.forEach(it => {
+      // 業者の場合、まず対応する 工程ID を探す
+      const proc = Store.state.processes.find(p => p['工程名'] === it.工程名);
+      const processId = proc ? proc['processId'] : '';
+      const color = proc ? proc['色'] : '#60A5FA';
+
+      if (s.scope === 'oku') {
+        // 工番行が未登録なら追加
+        if (!Store.state.ganttOkuRows.some(r => r['工番'] === it.工番)) {
+          Gantt.addOkuRow(it.工番);
+        }
+        const payload = {
+          scheduleId: Utils.uuid(),
+          工番: it.工番,
+          processId: processId,
+          工程名: it.工程名,
+          start: it.start,
+          end: it.end,
+          色: color,
+          メモ: it.メモ || '',
+          updatedAt: new Date().toISOString()
+        };
+        Store.state.okuSchedules.push(payload);
+        SaveQueue.enqueue('oku:create:' + payload.scheduleId, 'api_createOkuSchedule', [payload]);
+      } else {
+        const payload = {
+          scheduleId: Utils.uuid(),
+          contractorId: s.contractorId,
+          工番: it.工番,
+          processId: processId,
+          工程名: it.工程名,
+          start: it.start,
+          end: it.end,
+          色: color,
+          メモ: it.メモ || '',
+          updatedAt: new Date().toISOString()
+        };
+        Store.state.contractorSchedules.push(payload);
+        SaveQueue.enqueue('ctr:create:' + payload.scheduleId, 'api_createContractorSchedule', [payload]);
+      }
+      injected++;
+    });
+
+    Gantt.render();
+    if (s.scope === 'oku') {
+      OkuCalendar.refresh();
+    } else {
+      ContractorCalendar.refresh(s.contractorId);
+    }
+    UI.closeModal();
+    UI.toast(`✨ ${injected} 件のスケジュールを投入しました`, 'success');
   }
 };
 

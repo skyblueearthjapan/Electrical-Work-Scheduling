@@ -67,6 +67,9 @@
           <div class="gantt-section-header">
             <div class="gantt-section-label">奥氏</div>
             <div class="gantt-section-actions">
+              <button class="btn-task btn-task-ai" onclick="AIScheduleModal.open('oku', null)" title="AI で自由文からスケジュールを一括投入">
+                ✨ AI入力
+              </button>
               <button class="btn-task btn-task-secondary" onclick="DailyMemoModal.openListStandalone()" title="過去のタスクメモ一覧を開く">
                 📋 過去メモ一覧
               </button>
@@ -83,7 +86,14 @@
 
         <!-- 業者エリア -->
         <div class="gantt-section" id="gantt-contractor-section">
-          <div class="gantt-section-label">外注電気業者</div>
+          <div class="gantt-section-header">
+            <div class="gantt-section-label">外注電気業者</div>
+            <div class="gantt-section-actions">
+              <button class="btn-task btn-task-ai" onclick="Gantt.openContractorAIPicker()" title="業者を選択して AI 入力">
+                ✨ AI入力
+              </button>
+            </div>
+          </div>
           <div class="gantt-scroll-wrapper" id="gantt-ctr-wrapper">
             <div class="gantt-header-row" id="gantt-ctr-header"></div>
             <div class="gantt-body" id="gantt-ctr-body"></div>

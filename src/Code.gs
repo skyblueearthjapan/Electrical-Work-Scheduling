@@ -204,6 +204,28 @@ function api_reorderGanttOkuRows(orderedIds) {
   return DataService.reorderGanttOkuRows(orderedIds);
 }
 
+/* -------- AI スケジュール抽出 -------- */
+
+/**
+ * 自由文 → 構造化スケジュール抽出。
+ * 業者スコープの場合 contractorId を必須とし、登録済みのみ受け付ける。
+ */
+function api_aiParseSchedules(text, scope, contractorId) {
+  requireEditor_();
+  if (scope !== 'oku' && scope !== 'contractor') {
+    throw new Error('scope は oku または contractor を指定してください');
+  }
+  let contractorName = '';
+  if (scope === 'contractor') {
+    if (!contractorId) throw new Error('contractor スコープでは contractorId が必須です');
+    const ctr = DataService.listContractors()
+      .find(function(c) { return c['contractorId'] === contractorId; });
+    if (!ctr) throw new Error('登録されていない業者IDです: ' + contractorId);
+    contractorName = ctr['業者名'] || '';
+  }
+  return AIService.parseSchedules(text, scope, contractorName);
+}
+
 /* -------- DailyMemo -------- */
 
 function api_getDailyMemo(date) {
