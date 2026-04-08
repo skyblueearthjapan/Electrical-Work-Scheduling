@@ -1507,7 +1507,51 @@ const DailyMemoModal = {
       debouncedSave();
     });
 
-    // 3) フォーカス
+    // 3) Enter キーで丸数字を自動継続(①②③ → ④⑤⑥…)
+    ta.addEventListener('keydown', (e) => {
+      if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.keyCode === 229) return;
+      const start = ta.selectionStart;
+      const end = ta.selectionEnd;
+      if (start !== end) return; // 範囲選択中はスキップ
+      const value = ta.value;
+      const lineStart = value.lastIndexOf('\n', start - 1) + 1;
+      const lineEndIdx = value.indexOf('\n', start);
+      const lineEnd = lineEndIdx === -1 ? value.length : lineEndIdx;
+      const currentLine = value.substring(lineStart, lineEnd);
+
+      // 丸数字 ①(U+2460) ～ ⑳(U+2473) を検出
+      const m = currentLine.match(/^(\s*)([\u2460-\u2473])(\s*)(.*)$/);
+      if (!m) return;
+
+      const indent = m[1];
+      const num = m[2];
+      const sep = m[3] || ' ';
+      const content = m[4];
+
+      // 内容が空 → 番号を削除して箇条書きを終了
+      if (!content.trim()) {
+        e.preventDefault();
+        const newValue = value.substring(0, lineStart) + value.substring(lineEnd);
+        ta.value = newValue;
+        ta.selectionStart = ta.selectionEnd = lineStart;
+        ta.dispatchEvent(new Event('input'));
+        return;
+      }
+
+      // 次の丸数字を生成
+      const code = num.codePointAt(0);
+      if (code >= 0x2473) return; // ⑳ を超えたら何もしない(通常 Enter)
+      const nextNum = String.fromCodePoint(code + 1);
+
+      e.preventDefault();
+      const insert = '\n' + indent + nextNum + sep;
+      ta.value = value.substring(0, start) + insert + value.substring(start);
+      const cursor = start + insert.length;
+      ta.selectionStart = ta.selectionEnd = cursor;
+      ta.dispatchEvent(new Event('input'));
+    });
+
+    // 4) フォーカス
     setTimeout(() => ta.focus(), 100);
   },
 
