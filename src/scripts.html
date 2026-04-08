@@ -119,7 +119,9 @@ const Store = {
 
   init(bootstrap) {
     Object.assign(this.state, bootstrap);
-    this.state.ganttStartDate = this.state.today;
+    // Start gantt 7 days before today so today is past the sticky 220px row label
+    // and clearly clickable (7 cells × 32px = 224px > 220px label width).
+    this.state.ganttStartDate = Utils.addDays(this.state.today, -7);
     // Use server-persisted ganttOkuRows; merge in any 工番 from existing schedules
     // that aren't yet registered as a row (legacy data safety)
     const serverRows = (bootstrap.ganttOkuRows || []).map(r => ({
@@ -367,18 +369,55 @@ const App = {
     });
     Store.state.currentTab = name;
 
-    // Resize calendars on show (FullCalendar needs it)
+    // Resize calendars on show (FullCalendar needs it) AND force refetch so
+    // any schedule added from another tab is reflected immediately.
     setTimeout(() => {
       if (name === 'oku' && Store.state.okuCalendar) {
         Store.state.okuCalendar.updateSize();
+        Store.state.okuCalendar.refetchEvents();
       } else if (name && name.indexOf('ctr-') === 0) {
         const ctrId = name.substring(4);
         Store.state.activeContractorTab = ctrId;
         ContractorCalendar.ensureCalendar(ctrId);
         const cal = Store.state.contractorCalendars[ctrId];
-        if (cal) cal.updateSize();
+        if (cal) {
+          cal.updateSize();
+          cal.refetchEvents();
+        }
+      } else if (name === 'gantt') {
+        Gantt.render();
       }
     }, 30);
+  },
+
+  /** 全データ再取得 + 再描画(全ページ共通の更新ボタン) */
+  async refreshAll() {
+    const btn = document.getElementById('topbar-refresh-btn');
+    if (btn) btn.classList.add('spinning');
+    try {
+      // 未送信があればまずflush
+      if (SaveQueue.hasPending()) await SaveQueue.flush();
+      const boot = await API.call('api_bootstrap');
+      if (!boot) {
+        UI.toast('GAS環境外です', 'info');
+        return;
+      }
+      // カレンダーは破棄して作り直し(events関数の参照を更新するため)
+      try { if (Store.state.okuCalendar) Store.state.okuCalendar.destroy(); } catch (e) {}
+      Object.values(Store.state.contractorCalendars || {}).forEach(c => {
+        try { c.destroy(); } catch (e) {}
+      });
+      Store.state.okuCalendar = null;
+      Store.state.contractorCalendars = {};
+      Store.init(boot);
+      this.renderAll();
+      UI.toast('最新データを取得しました', 'success');
+    } catch (err) {
+      console.error(err);
+      UI.toast('更新エラー: ' + err.message, 'error');
+    } finally {
+      if (btn) btn.classList.remove('spinning');
+    }
   }
 };
 
@@ -575,11 +614,12 @@ const Gantt = {
     // Lane assignment
     const lanes = this.assignLanes(schedules);
     const laneCount = Math.max(1, lanes.laneCount);
-    row.style.minHeight = Math.max(64, laneCount * 28 + 18) + 'px';
+    const laneH = scope === 'ctr' ? 42 : 28;
+    row.style.minHeight = Math.max(scope === 'ctr' ? 76 : 64, laneCount * laneH + 18) + 'px';
 
     // Bars
     lanes.items.forEach(s => {
-      const bar = this.buildBar(s, dates, scope);
+      const bar = this.buildBar(s, dates, scope, laneH);
       if (bar) cellsWrap.appendChild(bar);
     });
 
@@ -595,7 +635,8 @@ const Gantt = {
     return row;
   },
 
-  buildBar(s, dates, scope) {
+  buildBar(s, dates, scope, laneH) {
+    laneH = laneH || 28;
     const startOffset = Utils.daysBetween(dates[0], s['start']);
     const duration = Utils.daysBetween(s['start'], s['end']) + 1;
     if (startOffset + duration <= 0 || startOffset >= dates.length) return null;
@@ -607,16 +648,32 @@ const Gantt = {
     bar.className = 'gantt-bar';
     const lane = s._lane || 0;
     bar.style.left = left + 'px';
-    bar.style.top = (6 + lane * 28) + 'px';
+    bar.style.top = (6 + lane * laneH) + 'px';
     bar.style.width = width + 'px';
+    if (scope === 'ctr') bar.style.height = '36px';
     bar.style.background = s['色'] || Store.getProcessColor(s['processId']);
     // Contractor color stripe on top
     if (scope === 'ctr' && s['contractorId']) {
       bar.style.borderTopColor = Store.getContractorColor(s['contractorId']);
     }
     const name = s['工程名'] || (Store.getProcessById(s['processId']) || {})['工程名'] || '';
-    bar.textContent = name;
-    bar.title = `${name} / ${s['start']} - ${s['end']}${s['メモ']?' / '+s['メモ']:''}`;
+    if (scope === 'ctr') {
+      // Two-line label: 工番 + 納入先名 / 工程名
+      const job = Store.getJobByNo(s['工番']) || {};
+      const line1 = document.createElement('div');
+      line1.className = 'bar-line1';
+      line1.textContent = `${s['工番']||''} ${job['納入先']||''}`.trim();
+      const line2 = document.createElement('div');
+      line2.className = 'bar-line2';
+      line2.textContent = name;
+      bar.appendChild(line1);
+      bar.appendChild(line2);
+      bar.classList.add('gantt-bar-multiline');
+      bar.title = `${s['工番']||''} / ${job['納入先']||''} / ${name} / ${s['start']} - ${s['end']}${s['メモ']?' / '+s['メモ']:''}`;
+    } else {
+      bar.textContent = name;
+      bar.title = `${name} / ${s['start']} - ${s['end']}${s['メモ']?' / '+s['メモ']:''}`;
+    }
     bar.addEventListener('click', (e) => {
       e.stopPropagation();
       if (scope === 'oku') OkuModal.openEdit(s);
@@ -1356,6 +1413,194 @@ const Todo = {
     this.render();
     SaveQueue.enqueue('todo:create:' + t.todoId, 'api_createTodo', [{
       scopeType: scopeType, contractorId: contractorId || '', text: text
+    }]);
+  }
+};
+
+/* ================= OkuTaskModal (本日のタスク + 短期目標) ================= */
+const OkuTaskModal = {
+  open() {
+    const modal = UI.openModal();
+    modal.classList.add('modal-tall');
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">📓 本日のタスク管理(奥氏)</div>
+        <button class="modal-close" onclick="UI.closeModal()">×</button>
+      </div>
+      <div class="modal-body oku-task-body">
+
+        <section class="task-section">
+          <h3 class="task-section-title">🎯 短期目標</h3>
+          <p class="task-section-hint">期日付きの目標。完了チェックで削除されます。</p>
+          <div class="task-add-row">
+            <input type="text" id="goal-input" placeholder="新しい短期目標..." maxlength="200">
+            <input type="date" id="goal-due" title="達成期日">
+            <button class="btn-primary" id="goal-add-btn">追加</button>
+          </div>
+          <ul class="task-list" id="goal-list"></ul>
+        </section>
+
+        <section class="task-section">
+          <h3 class="task-section-title">📋 本日のやることリスト</h3>
+          <p class="task-section-hint">完了チェックで削除されます。</p>
+          <div class="task-add-row">
+            <input type="text" id="today-input" placeholder="新しいやることを追加..." maxlength="200">
+            <button class="btn-primary" id="today-add-btn">追加</button>
+          </div>
+          <ul class="task-list" id="today-list"></ul>
+        </section>
+
+      </div>
+      <div class="modal-footer">
+        <button class="btn-ghost" onclick="UI.closeModal()">閉じる</button>
+      </div>
+    `;
+    this.renderLists();
+
+    document.getElementById('goal-add-btn').addEventListener('click', () => {
+      const input = document.getElementById('goal-input');
+      const due = document.getElementById('goal-due');
+      const text = input.value.trim();
+      if (!text) return;
+      this.add('oku-goal', text, due.value || '');
+      input.value = '';
+      due.value = '';
+    });
+    document.getElementById('goal-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('goal-add-btn').click();
+    });
+
+    document.getElementById('today-add-btn').addEventListener('click', () => {
+      const input = document.getElementById('today-input');
+      const text = input.value.trim();
+      if (!text) return;
+      this.add('oku-today', text, '');
+      input.value = '';
+    });
+    document.getElementById('today-input').addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') document.getElementById('today-add-btn').click();
+    });
+  },
+
+  renderLists() {
+    const goalList = document.getElementById('goal-list');
+    const todayList = document.getElementById('today-list');
+    if (!goalList || !todayList) return;
+
+    const goals = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-goal' && !t['isDone'])
+      .sort((a, b) => String(a['dueDate']||'9999').localeCompare(String(b['dueDate']||'9999')));
+    const todays = Store.state.todos
+      .filter(t => t['scopeType'] === 'oku-today' && !t['isDone'])
+      .sort((a, b) => (a['sortOrder']||0) - (b['sortOrder']||0));
+
+    goalList.innerHTML = '';
+    if (goals.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'task-empty';
+      empty.textContent = '短期目標はまだありません';
+      goalList.appendChild(empty);
+    } else {
+      goals.forEach(t => goalList.appendChild(this.buildItem(t, true)));
+    }
+
+    todayList.innerHTML = '';
+    if (todays.length === 0) {
+      const empty = document.createElement('li');
+      empty.className = 'task-empty';
+      empty.textContent = '本日のやることはまだありません';
+      todayList.appendChild(empty);
+    } else {
+      todays.forEach(t => todayList.appendChild(this.buildItem(t, false)));
+    }
+  },
+
+  buildItem(t, withDue) {
+    const li = document.createElement('li');
+    li.className = 'task-item';
+
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.className = 'task-check';
+    cb.title = '完了でリストから削除';
+    cb.addEventListener('change', () => {
+      // Mark done → delete from server (item disappears)
+      Store.state.todos = Store.state.todos.filter(x => x['todoId'] !== t['todoId']);
+      SaveQueue.enqueue('todo:delete:' + t['todoId'], 'api_deleteTodo', [t['todoId']]);
+      this.renderLists();
+      UI.toast('完了しました', 'success');
+    });
+
+    const tx = document.createElement('span');
+    tx.className = 'task-text';
+    tx.textContent = t['text'] || '';
+    tx.contentEditable = 'true';
+    tx.addEventListener('blur', () => {
+      const nv = tx.textContent.trim();
+      if (nv && nv !== t['text']) {
+        t['text'] = nv;
+        SaveQueue.enqueue('todo:update:' + t['todoId'], 'api_updateTodo', [t['todoId'], { text: nv }]);
+      }
+    });
+
+    li.appendChild(cb);
+    li.appendChild(tx);
+
+    if (withDue) {
+      const due = document.createElement('input');
+      due.type = 'date';
+      due.className = 'task-due';
+      due.value = t['dueDate'] || '';
+      due.title = '達成期日';
+      due.addEventListener('change', () => {
+        t['dueDate'] = due.value;
+        SaveQueue.enqueue('todo:update:' + t['todoId'], 'api_updateTodo', [t['todoId'], { dueDate: due.value }]);
+        this.renderLists();
+      });
+      li.appendChild(due);
+
+      // Overdue / due-today highlight
+      if (t['dueDate']) {
+        const today = Store.state.today;
+        if (t['dueDate'] < today) li.classList.add('overdue');
+        else if (t['dueDate'] === today) li.classList.add('due-today');
+      }
+    }
+
+    const del = document.createElement('button');
+    del.className = 'task-del';
+    del.textContent = '削除';
+    del.title = 'この項目を削除';
+    del.addEventListener('click', () => {
+      if (!confirm('削除しますか?')) return;
+      Store.state.todos = Store.state.todos.filter(x => x['todoId'] !== t['todoId']);
+      SaveQueue.enqueue('todo:delete:' + t['todoId'], 'api_deleteTodo', [t['todoId']]);
+      this.renderLists();
+    });
+    li.appendChild(del);
+
+    return li;
+  },
+
+  add(scopeType, text, dueDate) {
+    const t = {
+      todoId: Utils.uuid(),
+      scopeType: scopeType,
+      contractorId: '',
+      text: text,
+      isDone: false,
+      sortOrder: Date.now(),
+      dueDate: dueDate || '',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    };
+    Store.state.todos.push(t);
+    this.renderLists();
+    SaveQueue.enqueue('todo:create:' + t.todoId, 'api_createTodo', [{
+      scopeType: scopeType,
+      contractorId: '',
+      text: text,
+      dueDate: dueDate || ''
     }]);
   }
 };

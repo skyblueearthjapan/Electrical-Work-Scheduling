@@ -23,6 +23,10 @@
       <!-- 業者ごとのタブはJSで動的に挿入される -->
     </nav>
     <div class="topbar-status">
+      <button id="topbar-refresh-btn" class="topbar-refresh" title="サーバから全データを再取得して再描画" onclick="App.refreshAll()">
+        <span class="refresh-icon">⟳</span>
+        <span class="refresh-label">更新</span>
+      </button>
       <span id="save-status" class="save-status saved">✓ 保存済み</span>
       <span id="user-badge" class="user-badge"></span>
     </div>
@@ -59,7 +63,12 @@
 
         <!-- 奥氏エリア -->
         <div class="gantt-section" id="gantt-oku-section">
-          <div class="gantt-section-label">奥氏</div>
+          <div class="gantt-section-header">
+            <div class="gantt-section-label">奥氏</div>
+            <button class="btn-task" onclick="OkuTaskModal.open()" title="本日のタスク・短期目標を管理">
+              📓 本日のタスク
+            </button>
+          </div>
           <div class="gantt-scroll-wrapper" id="gantt-oku-wrapper">
             <div class="gantt-header-row" id="gantt-oku-header"></div>
             <div class="gantt-body" id="gantt-oku-body"></div>

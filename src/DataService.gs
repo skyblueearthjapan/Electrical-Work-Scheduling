@@ -292,6 +292,7 @@ const DataService = (function() {
         text: payload.text || '',
         isDone: false,
         sortOrder: payload.sortOrder || Date.now(),
+        dueDate: payload.dueDate || '',
         createdAt: now,
         updatedAt: now,
         updatedBy: getCurrentUserEmail_()

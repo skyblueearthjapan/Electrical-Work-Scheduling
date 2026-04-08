@@ -172,6 +172,33 @@ input:focus, select:focus, textarea:focus {
   color: var(--accent-red);
 }
 
+.topbar-refresh {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 12px;
+  background: rgba(96,165,250,0.08);
+  color: var(--accent-blue);
+  border: 1px solid rgba(96,165,250,0.35);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+.topbar-refresh:hover {
+  background: rgba(96,165,250,0.18);
+  border-color: var(--accent-blue);
+}
+.topbar-refresh .refresh-icon {
+  font-size: 16px;
+  display: inline-block;
+  line-height: 1;
+}
+.topbar-refresh.spinning .refresh-icon {
+  animation: spin 0.8s linear infinite;
+}
+
 .user-badge {
   padding: 6px 12px;
   font-size: 12px;
@@ -294,6 +321,127 @@ input:focus, select:focus, textarea:focus {
   margin-bottom: 10px;
   padding-left: 4px;
 }
+.gantt-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.gantt-section-header .gantt-section-label { margin-bottom: 0; }
+.btn-task {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 14px;
+  background: linear-gradient(180deg, rgba(201,168,76,0.2) 0%, rgba(201,168,76,0.08) 100%);
+  color: var(--accent-gold-bright);
+  border: 1px solid var(--accent-gold);
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+.btn-task:hover {
+  background: linear-gradient(180deg, rgba(201,168,76,0.35) 0%, rgba(201,168,76,0.15) 100%);
+  transform: translateY(-1px);
+}
+
+/* ===== OkuTaskModal ===== */
+.oku-task-body { display: flex; flex-direction: column; gap: 24px; }
+.task-section {
+  background: var(--bg-elev);
+  border: 1px solid var(--border-base);
+  border-radius: 8px;
+  padding: 14px 16px;
+}
+.task-section-title {
+  margin: 0 0 4px;
+  font-size: 14px;
+  color: var(--text-gold);
+  font-weight: 700;
+}
+.task-section-hint {
+  margin: 0 0 12px;
+  font-size: 11px;
+  color: var(--text-muted);
+}
+.task-add-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+.task-add-row input[type="text"] { flex: 1; }
+.task-add-row input[type="date"] { width: 150px; }
+
+.task-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.task-empty {
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 8px;
+  text-align: center;
+  font-style: italic;
+}
+.task-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--bg-panel);
+  border: 1px solid var(--border-base);
+  border-radius: 6px;
+  transition: border-color 0.15s ease;
+}
+.task-item:hover { border-color: var(--border-strong); }
+.task-item.overdue {
+  border-color: rgba(248,113,113,0.5);
+  background: rgba(248,113,113,0.05);
+}
+.task-item.due-today {
+  border-color: rgba(245,158,11,0.5);
+  background: rgba(245,158,11,0.05);
+}
+.task-check {
+  width: 18px;
+  height: 18px;
+  accent-color: var(--accent-gold);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.task-text {
+  flex: 1;
+  font-size: 13px;
+  color: var(--text-primary);
+  outline: none;
+  padding: 2px 4px;
+  border-radius: 3px;
+  min-width: 0;
+}
+.task-text:focus { background: rgba(255,255,255,0.04); }
+.task-due {
+  width: 130px;
+  flex-shrink: 0;
+  padding: 4px 8px;
+  font-size: 12px;
+}
+.task-del {
+  padding: 4px 10px;
+  background: transparent;
+  border: 1px solid rgba(248,113,113,0.4);
+  color: var(--accent-red);
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+.task-del:hover { background: rgba(248,113,113,0.15); }
 
 .gantt-scroll-wrapper {
   position: relative;
@@ -458,6 +606,27 @@ input:focus, select:focus, textarea:focus {
   transform: translateY(-1px);
   box-shadow: 0 4px 10px rgba(0,0,0,0.6);
   z-index: 3;
+}
+.gantt-bar-multiline {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 3px 6px;
+  line-height: 1.15;
+  white-space: nowrap;
+}
+.gantt-bar-multiline .bar-line1 {
+  font-size: 11px;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.gantt-bar-multiline .bar-line2 {
+  font-size: 10px;
+  font-weight: 500;
+  opacity: 0.9;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .gantt-bar.important::before {
   content: '';
