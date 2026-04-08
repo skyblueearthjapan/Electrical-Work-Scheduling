@@ -21,7 +21,8 @@ const CONFIG = {
     PERMISSIONS: 'Permissions',
     JOBS_CACHE: 'JobsCache',
     SCHEMA_VERSION: 'SchemaVersion',
-    AUDIT_LOG: 'AuditLog'
+    AUDIT_LOG: 'AuditLog',
+    GANTT_OKU_ROWS: 'GanttOkuRows'
   },
 
   HEADERS: {
@@ -59,7 +60,8 @@ const CONFIG = {
       'cachedAt'
     ],
     SCHEMA_VERSION: ['version', 'appliedAt', 'note'],
-    AUDIT_LOG: ['timestamp', 'email', 'action', 'params', 'result']
+    AUDIT_LOG: ['timestamp', 'email', 'action', 'params', 'result'],
+    GANTT_OKU_ROWS: ['rowId', '工番', 'sortOrder', 'createdAt', 'updatedAt', 'updatedBy']
   },
 
   INITIAL_PROCESSES: [

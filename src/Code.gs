@@ -108,6 +108,7 @@ function api_bootstrap() {
     contractorSchedules: DataService.listContractorSchedules(),
     todos: DataService.listTodos(),
     jobs: DataService.listJobsCache(),
+    ganttOkuRows: DataService.listGanttOkuRows(),
     ghostSchedules: [],  // Phase 4 で中継GAS経由
     today: Utilities.formatDate(new Date(), 'Asia/Tokyo', 'yyyy-MM-dd')
   });
@@ -184,6 +185,23 @@ function api_updateTodo(todoId, patch) {
 function api_deleteTodo(todoId) {
   requireEditor_();
   return DataService.deleteTodo(todoId);
+}
+
+/* -------- GanttOkuRows -------- */
+
+function api_createGanttOkuRow(payload) {
+  requireEditor_();
+  return DataService.createGanttOkuRow(payload);
+}
+
+function api_deleteGanttOkuRow(rowId) {
+  requireEditor_();
+  return DataService.deleteGanttOkuRow(rowId);
+}
+
+function api_reorderGanttOkuRows(orderedIds) {
+  requireEditor_();
+  return DataService.reorderGanttOkuRows(orderedIds);
 }
 
 /* -------- JobsCache refresh -------- */

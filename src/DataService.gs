@@ -313,6 +313,85 @@ const DataService = (function() {
     });
   }
 
+  /* -------- GanttOkuRows -------- */
+
+  function listGanttOkuRows() {
+    // Tolerate missing sheet (pre-migration deployments)
+    try {
+      const sh = getDataSS_().getSheetByName(CONFIG.SHEETS.GANTT_OKU_ROWS);
+      if (!sh) return [];
+    } catch (e) { return []; }
+    const { rows } = readAll_(CONFIG.SHEETS.GANTT_OKU_ROWS);
+    return rows.sort(function(a, b) {
+      return (a['sortOrder'] || 0) - (b['sortOrder'] || 0);
+    });
+  }
+
+  function createGanttOkuRow(payload) {
+    return withLock_(function() {
+      const sh = getSheetByName_(CONFIG.SHEETS.GANTT_OKU_ROWS);
+      // Duplicate guard
+      const data = sh.getDataRange().getValues();
+      if (data.length > 1) {
+        const headers = data[0];
+        const idx = headers.indexOf('工番');
+        if (idx !== -1) {
+          for (let i = 1; i < data.length; i++) {
+            if (String(data[i][idx]) === String(payload['工番'])) {
+              return { duplicate: true };
+            }
+          }
+        }
+      }
+      const id = uuid_();
+      const now = nowISO_();
+      const row = {
+        rowId: id,
+        工番: payload['工番'] || '',
+        sortOrder: payload.sortOrder || Date.now(),
+        createdAt: now,
+        updatedAt: now,
+        updatedBy: getCurrentUserEmail_()
+      };
+      appendRow_(CONFIG.SHEETS.GANTT_OKU_ROWS, row);
+      return row;
+    });
+  }
+
+  function updateGanttOkuRow(rowId, patch) {
+    return withLock_(function() {
+      return updateRowByKey_(CONFIG.SHEETS.GANTT_OKU_ROWS, 'rowId', rowId, patch, null);
+    });
+  }
+
+  function deleteGanttOkuRow(rowId) {
+    return withLock_(function() {
+      return deleteRowByKey_(CONFIG.SHEETS.GANTT_OKU_ROWS, 'rowId', rowId);
+    });
+  }
+
+  function reorderGanttOkuRows(orderedIds) {
+    return withLock_(function() {
+      const sh = getSheetByName_(CONFIG.SHEETS.GANTT_OKU_ROWS);
+      const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+      const idIdx = headers.indexOf('rowId');
+      const soIdx = headers.indexOf('sortOrder');
+      const uaIdx = headers.indexOf('updatedAt');
+      if (idIdx === -1 || soIdx === -1) return false;
+      const data = sh.getDataRange().getValues();
+      const now = nowISO_();
+      for (let i = 1; i < data.length; i++) {
+        const id = String(data[i][idIdx]);
+        const pos = orderedIds.indexOf(id);
+        if (pos !== -1) {
+          sh.getRange(i + 1, soIdx + 1).setValue((pos + 1) * 10);
+          if (uaIdx !== -1) sh.getRange(i + 1, uaIdx + 1).setValue(now);
+        }
+      }
+      return true;
+    });
+  }
+
   /* -------- JobsCache -------- */
 
   function refreshJobsCache() {
@@ -372,6 +451,11 @@ const DataService = (function() {
     listTodos: listTodos,
     listJobsCache: listJobsCache,
     searchJobs: searchJobs,
+    listGanttOkuRows: listGanttOkuRows,
+    createGanttOkuRow: createGanttOkuRow,
+    updateGanttOkuRow: updateGanttOkuRow,
+    deleteGanttOkuRow: deleteGanttOkuRow,
+    reorderGanttOkuRows: reorderGanttOkuRows,
     createOkuSchedule: createOkuSchedule,
     updateOkuSchedule: updateOkuSchedule,
     deleteOkuSchedule: deleteOkuSchedule,

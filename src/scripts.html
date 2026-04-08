@@ -120,12 +120,22 @@ const Store = {
   init(bootstrap) {
     Object.assign(this.state, bootstrap);
     this.state.ganttStartDate = this.state.today;
-    // Build ganttOkuRows from existing OkuSchedule distinct 工番
-    const set = new Set();
+    // Use server-persisted ganttOkuRows; merge in any 工番 from existing schedules
+    // that aren't yet registered as a row (legacy data safety)
+    const serverRows = (bootstrap.ganttOkuRows || []).map(r => ({
+      rowId: r['rowId'],
+      工番: r['工番'],
+      sortOrder: r['sortOrder'] || 0
+    }));
+    const known = new Set(serverRows.map(r => r['工番']));
     (this.state.okuSchedules || []).forEach(s => {
-      if (s['工番']) set.add(s['工番']);
+      if (s['工番'] && !known.has(s['工番'])) {
+        serverRows.push({ rowId: null, 工番: s['工番'], sortOrder: Date.now() });
+        known.add(s['工番']);
+      }
     });
-    this.state.ganttOkuRows = Array.from(set).map(j => ({ 工番: j }));
+    serverRows.sort((a, b) => (a.sortOrder || 0) - (b.sortOrder || 0));
+    this.state.ganttOkuRows = serverRows;
     this.state.activeContractorTab = (this.state.contractors[0] || {}).contractorId || null;
   },
 
@@ -361,8 +371,12 @@ const App = {
     setTimeout(() => {
       if (name === 'oku' && Store.state.okuCalendar) {
         Store.state.okuCalendar.updateSize();
-      } else if (name === 'cc') {
-        ContractorCalendar.onShow();
+      } else if (name && name.indexOf('ctr-') === 0) {
+        const ctrId = name.substring(4);
+        Store.state.activeContractorTab = ctrId;
+        ContractorCalendar.ensureCalendar(ctrId);
+        const cal = Store.state.contractorCalendars[ctrId];
+        if (cal) cal.updateSize();
       }
     }, 30);
   }
@@ -432,14 +446,14 @@ const Gantt = {
       return;
     }
 
-    rows.forEach((row) => {
+    rows.forEach((row, idx) => {
       const jobNo = row['工番'];
       const job = Store.getJobByNo(jobNo);
       const schedules = Store.state.okuSchedules.filter(s => s['工番'] === jobNo);
       body.appendChild(this.buildRow({
         scope: 'oku',
         rowKey: jobNo,
-        labelHtml: this.buildLabel('🧑‍💻', jobNo),
+        labelHtml: this.buildOkuLabel(jobNo, idx, rows.length),
         schedules,
         dates,
         job,
@@ -479,6 +493,49 @@ const Gantt = {
     tx.style.fontWeight = '700';
     el.appendChild(ic);
     el.appendChild(tx);
+    return el;
+  },
+
+  buildOkuLabel(jobNo, idx, total) {
+    const el = document.createElement('div');
+    el.className = 'gantt-row-label';
+    const ic = document.createElement('span');
+    ic.textContent = '🧑‍💻';
+    const tx = document.createElement('span');
+    tx.textContent = jobNo;
+    tx.style.color = 'var(--accent-gold-bright)';
+    tx.style.fontWeight = '700';
+    tx.style.flex = '1';
+    el.appendChild(ic);
+    el.appendChild(tx);
+
+    const acts = document.createElement('span');
+    acts.className = 'row-actions';
+    acts.style.cssText = 'display:inline-flex;gap:4px;margin-left:auto;';
+
+    const mkBtn = (label, title, handler, disabled) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'row-action-btn';
+      b.textContent = label;
+      b.title = title;
+      b.disabled = !!disabled;
+      b.style.cssText =
+        'background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.18);' +
+        'color:#e5e7eb;border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer;line-height:1;' +
+        (disabled ? 'opacity:0.35;cursor:default;' : '');
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (!b.disabled) handler();
+      });
+      return b;
+    };
+
+    acts.appendChild(mkBtn('▲', '上へ', () => Gantt.moveOkuRow(idx, -1), idx === 0));
+    acts.appendChild(mkBtn('▼', '下へ', () => Gantt.moveOkuRow(idx, +1), idx === total - 1));
+    acts.appendChild(mkBtn('×', '工番行を削除', () => Gantt.removeOkuRow(jobNo)));
+
+    el.appendChild(acts);
     return el;
   },
 
@@ -661,6 +718,7 @@ const Gantt = {
 
   openAddJobModal() {
     const modal = UI.openModal();
+    modal.classList.add('modal-tall');
     modal.innerHTML = `
       <div class="modal-header">
         <div class="modal-title">工番を追加</div>
@@ -671,7 +729,7 @@ const Gantt = {
           <label>工番検索(番号・受注先・品名で絞り込み)</label>
           <div class="combobox">
             <input id="job-search-input" type="text" placeholder="例: LW25056" autocomplete="off">
-            <div id="job-search-list" class="combobox-list hidden"></div>
+            <div id="job-search-list" class="combobox-list"></div>
           </div>
         </div>
       </div>
@@ -720,9 +778,42 @@ const Gantt = {
       UI.toast('既に追加されています', 'info');
       return;
     }
-    Store.state.ganttOkuRows.push({ 工番: jobNo });
+    const tempId = Utils.uuid();
+    const sortOrder = (Store.state.ganttOkuRows.length + 1) * 10;
+    Store.state.ganttOkuRows.push({ rowId: tempId, 工番: jobNo, sortOrder: sortOrder });
     this.render();
+    SaveQueue.enqueue('ganttOku:create:' + tempId, 'api_createGanttOkuRow',
+      [{ '工番': jobNo, sortOrder: sortOrder }]);
     UI.toast(`工番 ${jobNo} を追加しました`, 'success');
+  },
+
+  removeOkuRow(jobNo) {
+    const row = Store.state.ganttOkuRows.find(r => r['工番'] === jobNo);
+    if (!row) return;
+    const hasSchedules = Store.state.okuSchedules.some(s => s['工番'] === jobNo && !s['deletedAt']);
+    const msg = hasSchedules
+      ? `工番 ${jobNo} には既存スケジュールがあります。\n行を削除しても予定データ自体は残ります(再追加で復活)。\n削除しますか?`
+      : `工番 ${jobNo} を削除しますか?`;
+    if (!confirm(msg)) return;
+    Store.state.ganttOkuRows = Store.state.ganttOkuRows.filter(r => r['工番'] !== jobNo);
+    this.render();
+    if (row.rowId) {
+      SaveQueue.enqueue('ganttOku:delete:' + row.rowId, 'api_deleteGanttOkuRow', [row.rowId]);
+    }
+    UI.toast(`工番 ${jobNo} を削除しました`, 'success');
+  },
+
+  moveOkuRow(idx, delta) {
+    const rows = Store.state.ganttOkuRows;
+    const tgt = idx + delta;
+    if (tgt < 0 || tgt >= rows.length) return;
+    const tmp = rows[idx];
+    rows[idx] = rows[tgt];
+    rows[tgt] = tmp;
+    rows.forEach((r, i) => { r.sortOrder = (i + 1) * 10; });
+    this.render();
+    const orderedIds = rows.map(r => r.rowId).filter(Boolean);
+    SaveQueue.enqueue('ganttOku:reorder', 'api_reorderGanttOkuRows', [orderedIds]);
   }
 };
 
@@ -1065,48 +1156,59 @@ const OkuCalendar = {
 /* ================= ContractorCalendar ================= */
 const ContractorCalendar = {
   renderAll() {
-    const nav = document.getElementById('contractor-sub-nav');
-    const container = document.getElementById('contractor-sub-contents');
+    const nav = document.getElementById('main-tab-nav');
+    const container = document.getElementById('contractor-tab-contents');
     if (!nav || !container) return;
-    nav.innerHTML = '';
+    // Remove any pre-existing dynamically-injected contractor tabs/panes
+    nav.querySelectorAll('.tab-link[data-contractor="1"]').forEach(el => el.remove());
     container.innerHTML = '';
-    Store.state.contractors.forEach((c, i) => {
+
+    Store.state.contractors.forEach((c) => {
+      const tabName = 'ctr-' + c['contractorId'];
+      // Top-level tab button
       const btn = document.createElement('button');
-      btn.className = 'sub-tab-link' + (i === 0 ? ' active' : '');
-      btn.dataset.ctr = c['contractorId'];
+      btn.className = 'tab-link';
+      btn.dataset.tab = tabName;
+      btn.dataset.contractor = '1';
+      btn.addEventListener('click', () => App.switchTab(tabName));
       const dot = document.createElement('span');
       dot.className = 'color-dot';
-      dot.style.background = c['識別色'] || '#999';
+      dot.style.cssText =
+        'display:inline-block;width:10px;height:10px;border-radius:50%;margin-right:6px;vertical-align:middle;background:' +
+        (c['識別色'] || '#999');
       const tx = document.createElement('span');
       tx.textContent = c['業者名'];
       btn.appendChild(dot);
       btn.appendChild(tx);
-      btn.addEventListener('click', () => this.switchSub(c['contractorId']));
       nav.appendChild(btn);
 
-      const pane = document.createElement('div');
-      pane.className = 'sub-tab-pane' + (i === 0 ? ' active' : '');
-      pane.id = 'sub-' + c['contractorId'];
+      // Tab pane
+      const pane = document.createElement('section');
+      pane.className = 'tab-content';
+      pane.id = 'tab-' + tabName;
       pane.innerHTML = `
-        <div class="contractor-header">
-          <div class="contractor-name"></div>
-          <div class="contractor-contact">
-            <span class="ctr-manager"></span>
-            <span class="tel"></span>
-            <span class="mail"></span>
+        <div class="panel">
+          <div class="panel-header">
+            <div class="panel-title">${Utils.esc(c['業者名'])}</div>
           </div>
-        </div>
-        <div class="fc-container" id="cal-${c['contractorId']}"></div>
-        <div class="memo-section">
-          <h3>依頼状況メモ</h3>
-          <div class="memo-input-row">
-            <input type="text" placeholder="新しいメモを追加..." class="ctr-todo-input" maxlength="200">
-            <button class="btn-primary">追加</button>
+          <div class="contractor-header">
+            <div class="contractor-contact">
+              <span class="ctr-manager"></span>
+              <span class="tel"></span>
+              <span class="mail"></span>
+            </div>
           </div>
-          <ul class="todo-list ctr-todo-list"></ul>
+          <div class="fc-container" id="cal-${c['contractorId']}"></div>
+          <div class="memo-section">
+            <h3>依頼状況メモ</h3>
+            <div class="memo-input-row">
+              <input type="text" placeholder="新しいメモを追加..." class="ctr-todo-input" maxlength="200">
+              <button class="btn-primary">追加</button>
+            </div>
+            <ul class="todo-list ctr-todo-list" data-ctr="${c['contractorId']}"></ul>
+          </div>
         </div>
       `;
-      pane.querySelector('.contractor-name').textContent = c['業者名'];
       pane.querySelector('.ctr-manager').textContent = c['担当者'] || '担当者未登録';
       pane.querySelector('.tel').textContent = c['電話番号'] || '';
       pane.querySelector('.mail').textContent = c['メール'] || '';
@@ -1120,26 +1222,8 @@ const ContractorCalendar = {
       });
       container.appendChild(pane);
     });
-    // Initialize calendars lazily — create for first one
-    setTimeout(() => {
-      if (Store.state.contractors[0]) this.ensureCalendar(Store.state.contractors[0]['contractorId']);
-      Todo.render();
-    }, 50);
-  },
 
-  switchSub(contractorId) {
-    document.querySelectorAll('.sub-tab-link').forEach(el => {
-      el.classList.toggle('active', el.dataset.ctr === contractorId);
-    });
-    document.querySelectorAll('.sub-tab-pane').forEach(el => {
-      el.classList.toggle('active', el.id === 'sub-' + contractorId);
-    });
-    Store.state.activeContractorTab = contractorId;
-    this.ensureCalendar(contractorId);
-    setTimeout(() => {
-      const cal = Store.state.contractorCalendars[contractorId];
-      if (cal) cal.updateSize();
-    }, 30);
+    setTimeout(() => Todo.render(), 50);
   },
 
   ensureCalendar(contractorId) {
@@ -1183,11 +1267,6 @@ const ContractorCalendar = {
   refresh(contractorId) {
     const cal = Store.state.contractorCalendars[contractorId];
     if (cal) cal.refetchEvents();
-  },
-
-  onShow() {
-    const active = Store.state.activeContractorTab;
-    if (active) this.ensureCalendar(active);
   }
 };
 
@@ -1202,11 +1281,10 @@ const Todo = {
         okuList.appendChild(this.buildItem(t));
       });
     }
-    // contractor lists
-    document.querySelectorAll('.sub-tab-pane').forEach(pane => {
-      const cId = pane.id.replace('sub-', '');
-      const list = pane.querySelector('.ctr-todo-list');
-      if (!list) return;
+    // contractor lists (each contractor is now a top-level tab pane)
+    document.querySelectorAll('.ctr-todo-list').forEach(list => {
+      const cId = list.dataset.ctr;
+      if (!cId) return;
       list.innerHTML = '';
       Store.state.todos.filter(t => t['scopeType'] === 'contractor' && t['contractorId'] === cId).forEach(t => {
         list.appendChild(this.buildItem(t));

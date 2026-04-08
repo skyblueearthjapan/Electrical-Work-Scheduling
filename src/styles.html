@@ -676,6 +676,32 @@ input:focus, select:focus, textarea:focus {
   overflow-y: auto;
   animation: slideUp 0.25s ease;
 }
+/* Tall modal for the 工番追加 search picker — doubles the usable height */
+.modal.modal-tall {
+  max-width: 600px;
+  min-height: 70vh;
+  max-height: 92vh;
+  display: flex;
+  flex-direction: column;
+}
+.modal.modal-tall .modal-body {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.modal.modal-tall .combobox {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.modal.modal-tall .combobox-list {
+  position: static;
+  flex: 1;
+  max-height: none;
+  margin-top: 8px;
+}
 @keyframes slideUp { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
 .modal-header {

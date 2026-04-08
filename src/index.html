@@ -20,7 +20,7 @@
     <nav class="tab-nav" id="main-tab-nav">
       <button class="tab-link active" data-tab="gantt" onclick="App.switchTab('gantt')">ガント管理</button>
       <button class="tab-link"        data-tab="oku"   onclick="App.switchTab('oku')">奥氏カレンダー</button>
-      <button class="tab-link"        data-tab="cc"    onclick="App.switchTab('cc')">業者カレンダー</button>
+      <!-- 業者ごとのタブはJSで動的に挿入される -->
     </nav>
     <div class="topbar-status">
       <span id="save-status" class="save-status saved">✓ 保存済み</span>
@@ -95,16 +95,8 @@
       </div>
     </section>
 
-    <!-- ========= Tab 3: 業者カレンダー ========= -->
-    <section class="tab-content" id="tab-cc">
-      <div class="panel">
-        <div class="panel-header">
-          <div class="panel-title">業者カレンダー</div>
-        </div>
-        <nav class="sub-tab-nav" id="contractor-sub-nav"></nav>
-        <div id="contractor-sub-contents"></div>
-      </div>
-    </section>
+    <!-- ========= 業者ごとのタブは JS で動的に挿入 ========= -->
+    <div id="contractor-tab-contents"></div>
 
   </main>
 
