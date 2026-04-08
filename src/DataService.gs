@@ -159,7 +159,8 @@ const DataService = (function() {
 
   function createOkuSchedule(payload) {
     const row = withLock_(function() {
-      const id = uuid_();
+      // クライアント発番の scheduleId を尊重(Store のローカル状態と一致させるため)
+      const id = (payload && payload.scheduleId) ? String(payload.scheduleId) : uuid_();
       const now = nowISO_();
       const r = {
         scheduleId: id,
@@ -201,9 +202,9 @@ const DataService = (function() {
     let snapshot = null;
     try { snapshot = findOkuRowById_(id); } catch (e) {}
     const result = withLock_(function() {
-      // Tombstone (論理削除) for Calendar sync reconciliation
+      // Tombstone (論理削除) — 削除はべき等なので楽観ロック無効化
       return updateRowByKey_(CONFIG.SHEETS.OKU_SCHEDULE, 'scheduleId', id,
-        { deletedAt: nowISO_() }, expectedUpdatedAt);
+        { deletedAt: nowISO_() }, null);
     });
     try {
       if (snapshot) pushOkuRowToCalendar(snapshot, 'delete');
@@ -233,7 +234,8 @@ const DataService = (function() {
 
   function createContractorSchedule(payload) {
     return withLock_(function() {
-      const id = uuid_();
+      // クライアント発番の scheduleId を尊重
+      const id = (payload && payload.scheduleId) ? String(payload.scheduleId) : uuid_();
       const now = nowISO_();
       const row = {
         scheduleId: id,
@@ -265,8 +267,9 @@ const DataService = (function() {
 
   function deleteContractorSchedule(id, expectedUpdatedAt) {
     return withLock_(function() {
+      // 削除はべき等なので楽観ロック無効化
       return updateRowByKey_(CONFIG.SHEETS.CONTRACTOR_SCHEDULE, 'scheduleId', id,
-        { deletedAt: nowISO_() }, expectedUpdatedAt);
+        { deletedAt: nowISO_() }, null);
     });
   }
 

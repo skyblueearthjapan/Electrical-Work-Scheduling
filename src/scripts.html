@@ -209,6 +209,30 @@ const SaveQueue = {
     try { localStorage.removeItem(this.LS_KEY); } catch (e) {}
   },
 
+  /**
+   * 成功レスポンスから updatedAt をローカル Store に同期する。
+   * これがないと、編集後の削除/再編集で楽観ロック衝突 (409) が必ず発生する。
+   */
+  applyResult_(fnName, args, result) {
+    if (!result || typeof result !== 'object') return;
+    const newUpdatedAt = result.updatedAt;
+    if (!newUpdatedAt) return;
+    let arr = null;
+    let id = null;
+    if (fnName === 'api_updateOkuSchedule' || fnName === 'api_deleteOkuSchedule') {
+      arr = Store.state.okuSchedules; id = args[0];
+    } else if (fnName === 'api_createOkuSchedule') {
+      arr = Store.state.okuSchedules; id = args[0] && args[0].scheduleId;
+    } else if (fnName === 'api_updateContractorSchedule' || fnName === 'api_deleteContractorSchedule') {
+      arr = Store.state.contractorSchedules; id = args[0];
+    } else if (fnName === 'api_createContractorSchedule') {
+      arr = Store.state.contractorSchedules; id = args[0] && args[0].scheduleId;
+    }
+    if (!arr || !id) return;
+    const item = arr.find(x => x['scheduleId'] === id);
+    if (item) item.updatedAt = newUpdatedAt;
+  },
+
   async flush() {
     if (this.isSaving) return;
     const keys = Object.keys(this.pending);
@@ -228,7 +252,8 @@ const SaveQueue = {
     for (const k of Object.keys(snapshot)) {
       const op = snapshot[k];
       try {
-        await API.call(op.fnName, ...op.args);
+        const result = await API.call(op.fnName, ...op.args);
+        this.applyResult_(op.fnName, op.args, result);
       } catch (err) {
         console.error('[SaveQueue] failed', k, err);
         this.pending[k] = op; // re-queue
