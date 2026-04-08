@@ -204,6 +204,18 @@ function api_reorderGanttOkuRows(orderedIds) {
   return DataService.reorderGanttOkuRows(orderedIds);
 }
 
+/* -------- DailyMemo -------- */
+
+function api_getDailyMemo(date) {
+  requireViewer_();
+  return DataService.getDailyMemo(date);
+}
+
+function api_saveDailyMemo(date, text) {
+  requireEditor_();
+  return DataService.saveDailyMemo(date, text);
+}
+
 /* -------- JobsCache refresh -------- */
 
 function api_refreshJobsCache() {

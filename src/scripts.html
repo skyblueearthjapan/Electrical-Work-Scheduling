@@ -109,7 +109,7 @@ const Store = {
     today: '',
     // UI state
     currentTab: 'gantt',
-    ganttDays: 90,
+    ganttDays: 180,
     ganttStartDate: null,
     ganttOkuRows: [],  // [{ 工番 }]
     activeContractorTab: null,
@@ -430,14 +430,14 @@ const Gantt = {
     const days = Store.state.ganttDays;
     const dates = Utils.genDateRange(start, days);
 
-    this.renderHeader('gantt-oku-header', dates);
-    this.renderHeader('gantt-ctr-header', dates);
+    this.renderHeader('gantt-oku-header', dates, true /* clickable */);
+    this.renderHeader('gantt-ctr-header', dates, false);
     this.renderOkuBody(dates);
     this.renderContractorBody(dates);
     this.syncScroll();
   },
 
-  renderHeader(elId, dates) {
+  renderHeader(elId, dates, clickable) {
     const el = document.getElementById(elId);
     if (!el) return;
     el.innerHTML = '';
@@ -447,6 +447,11 @@ const Gantt = {
       cell.className = 'gantt-date-cell';
       if (Utils.isWeekend(d)) cell.classList.add('weekend');
       if (d === today) cell.classList.add('today');
+      if (clickable) {
+        cell.classList.add('clickable');
+        cell.title = d + ' のタスクメモを開く';
+        cell.addEventListener('click', () => DailyMemoModal.open(d));
+      }
       const parsed = Utils.parseDate(d);
       const m = parsed.getMonth() + 1;
       const day = parsed.getDate();
@@ -1418,7 +1423,107 @@ const Todo = {
   }
 };
 
-/* ================= OkuTaskModal (本日のタスク + 短期目標) ================= */
+/* ================= DailyMemoModal (日付別タスクメモ) ================= */
+const DailyMemoModal = {
+  _saveTimer: null,
+  _currentDate: null,
+
+  async open(date) {
+    if (!date) date = Store.state.today;
+    this._currentDate = date;
+    const modal = UI.openModal();
+    modal.classList.add('modal-tall');
+    const parsed = Utils.parseDate(date);
+    const titleDate = parsed
+      ? `${parsed.getFullYear()}年${parsed.getMonth()+1}月${parsed.getDate()}日(${Utils.dow(date)})`
+      : date;
+    const isToday = date === Store.state.today;
+
+    modal.innerHTML = `
+      <div class="modal-header">
+        <div class="modal-title">📓 ${isToday ? '本日' : ''}のタスク — ${titleDate}</div>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <span id="memo-save-status" class="memo-save-status">読込中…</span>
+          <button class="modal-close" onclick="DailyMemoModal.close()">×</button>
+        </div>
+      </div>
+      <div class="modal-body daily-memo-body">
+        <textarea id="daily-memo-textarea"
+          placeholder="読み込み中..."
+          spellcheck="false"></textarea>
+      </div>
+      <div class="modal-footer">
+        <span class="memo-hint">自動保存されます(編集2秒後)</span>
+        <div style="flex:1"></div>
+        <button class="btn-ghost" onclick="DailyMemoModal.close()">閉じる</button>
+      </div>
+    `;
+
+    const ta = document.getElementById('daily-memo-textarea');
+    const status = document.getElementById('memo-save-status');
+
+    // 1) サーバから取得
+    try {
+      const r = await API.call('api_getDailyMemo', date);
+      const text = (r && r.text) || '';
+      if (text) {
+        ta.value = text;
+      } else {
+        // テンプレート(初回)
+        ta.value = '短期目標:\n  \n\n本日のタスク:\n  ① \n  ② \n  ③ \n\nメモ:\n  ';
+      }
+      ta.placeholder = '自由に記入してください...';
+      status.textContent = '✓ 保存済み';
+      status.className = 'memo-save-status saved';
+    } catch (err) {
+      ta.value = '';
+      ta.placeholder = '読込エラー: ' + err.message;
+      status.textContent = '✕ 読込失敗';
+      status.className = 'memo-save-status error';
+    }
+
+    // 2) 編集 → debounce 自動保存
+    const debouncedSave = Utils.debounce(() => this.save(), 1500);
+    ta.addEventListener('input', () => {
+      status.textContent = '● 未保存';
+      status.className = 'memo-save-status unsaved';
+      debouncedSave();
+    });
+
+    // 3) フォーカス
+    setTimeout(() => ta.focus(), 100);
+  },
+
+  async save() {
+    const ta = document.getElementById('daily-memo-textarea');
+    const status = document.getElementById('memo-save-status');
+    if (!ta || !this._currentDate) return;
+    const text = ta.value;
+    status.textContent = '⟳ 保存中…';
+    status.className = 'memo-save-status saving';
+    try {
+      await API.call('api_saveDailyMemo', this._currentDate, text);
+      status.textContent = '✓ 保存済み';
+      status.className = 'memo-save-status saved';
+    } catch (err) {
+      status.textContent = '✕ 保存失敗';
+      status.className = 'memo-save-status error';
+      UI.toast('保存エラー: ' + err.message, 'error');
+    }
+  },
+
+  async close() {
+    // Save pending edits before closing
+    const status = document.getElementById('memo-save-status');
+    if (status && status.classList.contains('unsaved')) {
+      await this.save();
+    }
+    this._currentDate = null;
+    UI.closeModal();
+  }
+};
+
+/* ================= OkuTaskModal (legacy structured todos — kept as fallback) ================= */
 const OkuTaskModal = {
   open() {
     const modal = UI.openModal();
@@ -1610,7 +1715,7 @@ const OkuTaskModal = {
 document.addEventListener('DOMContentLoaded', () => {
   const sel = document.getElementById('gantt-days-select');
   if (sel) sel.addEventListener('change', (e) => {
-    Store.state.ganttDays = parseInt(e.target.value, 10) || 90;
+    Store.state.ganttDays = parseInt(e.target.value, 10) || 180;
     Gantt.render();
   });
   App.init();

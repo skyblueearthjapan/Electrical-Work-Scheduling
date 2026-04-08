@@ -393,6 +393,59 @@ const DataService = (function() {
     });
   }
 
+  /* -------- DailyMemo -------- */
+
+  function getDailyMemo(date) {
+    let sh;
+    try {
+      sh = getDataSS_().getSheetByName(CONFIG.SHEETS.DAILY_MEMO);
+      if (!sh) return { date: date, text: '' };
+    } catch (e) { return { date: date, text: '' }; }
+    const data = sh.getDataRange().getValues();
+    if (data.length < 2) return { date: date, text: '' };
+    const headers = data[0];
+    const dIdx = headers.indexOf('date');
+    const tIdx = headers.indexOf('text');
+    for (let i = 1; i < data.length; i++) {
+      if (String(data[i][dIdx]) === String(date)) {
+        return { date: date, text: String(data[i][tIdx] || '') };
+      }
+    }
+    return { date: date, text: '' };
+  }
+
+  function saveDailyMemo(date, text) {
+    return withLock_(function() {
+      const sh = getSheetByName_(CONFIG.SHEETS.DAILY_MEMO);
+      const headers = sh.getRange(1, 1, 1, sh.getLastColumn()).getValues()[0];
+      const dIdx = headers.indexOf('date');
+      const tIdx = headers.indexOf('text');
+      const uaIdx = headers.indexOf('updatedAt');
+      const ubIdx = headers.indexOf('updatedBy');
+      const now = nowISO_();
+      const email = getCurrentUserEmail_();
+      const data = sh.getDataRange().getValues();
+      for (let i = 1; i < data.length; i++) {
+        if (String(data[i][dIdx]) === String(date)) {
+          sh.getRange(i + 1, tIdx + 1).setValue(text);
+          if (uaIdx !== -1) sh.getRange(i + 1, uaIdx + 1).setValue(now);
+          if (ubIdx !== -1) sh.getRange(i + 1, ubIdx + 1).setValue(email);
+          return { date: date, text: text, updatedAt: now };
+        }
+      }
+      // append new
+      const row = headers.map(function(h) {
+        if (h === 'date') return date;
+        if (h === 'text') return text;
+        if (h === 'updatedAt') return now;
+        if (h === 'updatedBy') return email;
+        return '';
+      });
+      sh.appendRow(row);
+      return { date: date, text: text, updatedAt: now };
+    });
+  }
+
   /* -------- JobsCache -------- */
 
   function refreshJobsCache() {
@@ -457,6 +510,8 @@ const DataService = (function() {
     updateGanttOkuRow: updateGanttOkuRow,
     deleteGanttOkuRow: deleteGanttOkuRow,
     reorderGanttOkuRows: reorderGanttOkuRows,
+    getDailyMemo: getDailyMemo,
+    saveDailyMemo: saveDailyMemo,
     createOkuSchedule: createOkuSchedule,
     updateOkuSchedule: updateOkuSchedule,
     deleteOkuSchedule: deleteOkuSchedule,

@@ -22,7 +22,8 @@ const CONFIG = {
     JOBS_CACHE: 'JobsCache',
     SCHEMA_VERSION: 'SchemaVersion',
     AUDIT_LOG: 'AuditLog',
-    GANTT_OKU_ROWS: 'GanttOkuRows'
+    GANTT_OKU_ROWS: 'GanttOkuRows',
+    DAILY_MEMO: 'DailyMemo'
   },
 
   HEADERS: {
@@ -61,7 +62,8 @@ const CONFIG = {
     ],
     SCHEMA_VERSION: ['version', 'appliedAt', 'note'],
     AUDIT_LOG: ['timestamp', 'email', 'action', 'params', 'result'],
-    GANTT_OKU_ROWS: ['rowId', '工番', 'sortOrder', 'createdAt', 'updatedAt', 'updatedBy']
+    GANTT_OKU_ROWS: ['rowId', '工番', 'sortOrder', 'createdAt', 'updatedAt', 'updatedBy'],
+    DAILY_MEMO: ['date', 'text', 'updatedAt', 'updatedBy']
   },
 
   INITIAL_PROCESSES: [
@@ -102,8 +104,8 @@ const CONFIG = {
 
   GANTT: {
     CELL_WIDTH: 32,
-    DEFAULT_DAYS: 90,
-    AVAILABLE_DAYS: [30, 60, 90, 180]
+    DEFAULT_DAYS: 180,
+    AVAILABLE_DAYS: [30, 60, 90, 180, 365]
   },
 
   PROPS_KEYS: {

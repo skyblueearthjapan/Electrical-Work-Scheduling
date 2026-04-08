@@ -52,8 +52,9 @@
               <select id="gantt-days-select">
                 <option value="30">30日</option>
                 <option value="60">60日</option>
-                <option value="90" selected>90日</option>
-                <option value="180">180日</option>
+                <option value="90">90日</option>
+                <option value="180" selected>180日</option>
+                <option value="365">365日(1年)</option>
               </select>
             </div>
             <button class="btn-primary" onclick="Gantt.openAddJobModal()">+ 工番追加</button>
@@ -65,7 +66,7 @@
         <div class="gantt-section" id="gantt-oku-section">
           <div class="gantt-section-header">
             <div class="gantt-section-label">奥氏</div>
-            <button class="btn-task" onclick="OkuTaskModal.open()" title="本日のタスク・短期目標を管理">
+            <button class="btn-task" onclick="DailyMemoModal.open()" title="本日のタスクメモを開く(日付クリックでも開けます)">
               📓 本日のタスク
             </button>
           </div>
