@@ -43,8 +43,8 @@ function pushOkuRowToCalendar(row, action) {
     // create / update — まずイベントオブジェクトを構築
     const job = lookupJobByNo_(row['工番']);
     const event = {
-      summary: buildEventTitle_(row['工番'], row['工程名']),
-      description: buildEventDescription_(job, row['メモ']),
+      summary: buildEventTitle_(row['工番'], job),
+      description: buildEventDescription_(job, row['工程名'], row['メモ']),
       start: { date: toDateStr_(row['start']) },
       end:   { date: addDayStr_(row['end'], 1) },  // all-day end は exclusive
       extendedProperties: {
@@ -142,12 +142,22 @@ function addDayStr_(v, days) {
 
 /* -------- title / description builders -------- */
 
-function buildEventTitle_(工番, 工程名) {
-  return String(工番 || '') + ' ' + String(工程名 || '');
+/**
+ * イベントタイトル: "奥:工事 {工番} {納入先} {品名}"
+ *   例: 奥:工事 LW25128 大京 MTlock-1500
+ *   納入先・品名が無い場合は該当部分を省略する。
+ */
+function buildEventTitle_(工番, job) {
+  const parts = ['奥:工事'];
+  if (工番) parts.push(String(工番));
+  if (job && job['納入先']) parts.push(String(job['納入先']));
+  if (job && job['品名'])   parts.push(String(job['品名']));
+  return parts.join(' ');
 }
 
-function buildEventDescription_(job, memo) {
+function buildEventDescription_(job, 工程名, memo) {
   const parts = [];
+  if (工程名) parts.push('工程: ' + 工程名);
   if (job) {
     if (job['納入先']) parts.push('納入先: ' + job['納入先']);
     if (job['品名']) parts.push('品名: ' + job['品名']);
