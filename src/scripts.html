@@ -1540,6 +1540,7 @@ const DailyMemoModal = {
       <div class="modal-header">
         <div class="modal-title" id="memo-title">${headerLabel} — ${titleDate}</div>
         <div style="display:flex;align-items:center;gap:10px;">
+          <button class="btn-ghost" id="memo-print-btn" title="このメモを印刷 / PDF保存">🖨 印刷</button>
           ${isPast ? '' : '<button class="btn-ghost" id="memo-mode-toggle" title="編集モード切替">✏ 編集</button>'}
           <span id="memo-save-status" class="memo-save-status">読込中…</span>
           <button class="modal-close" onclick="DailyMemoModal.close()">×</button>
@@ -1571,6 +1572,12 @@ const DailyMemoModal = {
       if (e.target.value) this.gotoDate(e.target.value);
     });
     document.getElementById('memo-list-btn').addEventListener('click', () => this.openList());
+
+    // 印刷ボタン(過去日でも有効)
+    const earlyPrintBtn = document.getElementById('memo-print-btn');
+    if (earlyPrintBtn) {
+      earlyPrintBtn.addEventListener('click', () => this.print(date, titleDate));
+    }
 
     // Past view: load saved snapshot only and exit
     if (isPast) {
@@ -2102,7 +2109,10 @@ const DailyMemoModal = {
     modal.innerHTML = `
       <div class="modal-header">
         <div class="modal-title">📜 ${titleDate} のメモ(閲覧のみ)</div>
-        <button class="modal-close" onclick="UI.closeModal()">×</button>
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button class="btn-ghost" id="memo-preview-print">🖨 印刷</button>
+          <button class="modal-close" onclick="UI.closeModal()">×</button>
+        </div>
       </div>
       <div class="modal-body">
         <pre id="memo-preview-content" class="memo-readonly">読込中…</pre>
@@ -2116,6 +2126,12 @@ const DailyMemoModal = {
       this._currentDate = returnDate || Store.state.today;
       this.openList();
     });
+    document.getElementById('memo-preview-print').addEventListener('click', () => {
+      this.printContent(
+        document.getElementById('memo-preview-content').textContent,
+        titleDate
+      );
+    });
     try {
       const r = await API.call('api_getDailyMemo', date);
       const display = (r && (r.preview || r.text)) || '';
@@ -2123,6 +2139,121 @@ const DailyMemoModal = {
         display || '(この日のメモはありません)';
     } catch (err) {
       document.getElementById('memo-preview-content').textContent = '読込エラー: ' + err.message;
+    }
+  },
+
+  /** 現在開いているモーダルのプレビュー内容を取得して印刷 */
+  print(date, titleDate) {
+    let content = '';
+    // モード判別: 過去日読取専用 / 今日のプレビュー(編集モード問わず)
+    const past = document.getElementById('memo-readonly-pre');
+    if (past) {
+      content = past.textContent || '';
+    } else {
+      const ta = document.getElementById('daily-memo-textarea');
+      content = this._buildFullPreview(ta ? ta.value : '');
+    }
+    this.printContent(content, titleDate);
+  },
+
+  /** 任意の文字列を印刷用 iframe に流し込んで印刷ダイアログを起動 */
+  printContent(content, titleDate) {
+    const safe = (s) => String(s == null ? '' : s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+    const printedAt = (() => {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getFullYear()}/${p(d.getMonth()+1)}/${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    })();
+
+    const html = `<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>本日のタスク — ${safe(titleDate)}</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0;
+    font-family: 'Noto Sans JP', 'Yu Gothic', 'Hiragino Sans', sans-serif;
+    color: #111;
+    background: #fff;
+    font-size: 12pt;
+    line-height: 1.7;
+  }
+  .doc { padding: 0; color: #111; }
+  .doc-header {
+    border-bottom: 2px solid #111;
+    padding-bottom: 10px;
+    margin-bottom: 18px;
+  }
+  .doc-title { font-size: 18pt; font-weight: 700; letter-spacing: 1px; margin: 0; }
+  .doc-subtitle { font-size: 13pt; color: #333; margin-top: 4px; }
+  .doc-body {
+    white-space: pre-wrap;
+    word-wrap: break-word;
+    font-family: 'Noto Sans JP', 'Yu Gothic', 'Hiragino Sans', monospace;
+    font-size: 12pt;
+    line-height: 1.85;
+    color: #111;
+    margin: 0;
+  }
+  .doc-footer {
+    margin-top: 24px;
+    padding-top: 8px;
+    border-top: 1px dashed #888;
+    font-size: 10pt;
+    color: #555;
+    display: flex;
+    justify-content: space-between;
+  }
+</style>
+</head>
+<body>
+  <div class="doc">
+    <div class="doc-header">
+      <h1 class="doc-title">📓 タスクメモ</h1>
+      <div class="doc-subtitle">${safe(titleDate)}</div>
+    </div>
+    <pre class="doc-body">${safe(content)}</pre>
+    <div class="doc-footer">
+      <span>電気工事スケジューリング</span>
+      <span>印刷日: ${safe(printedAt)}</span>
+    </div>
+  </div>
+</body>
+</html>`;
+
+    // 画面外に隠した iframe を作って書き込む
+    const old = document.getElementById('print-iframe-temp');
+    if (old) old.remove();
+    const iframe = document.createElement('iframe');
+    iframe.id = 'print-iframe-temp';
+    iframe.style.cssText = 'position:fixed;right:-9999px;bottom:-9999px;width:0;height:0;border:0;';
+    document.body.appendChild(iframe);
+
+    const doc = iframe.contentWindow.document;
+    doc.open();
+    doc.write(html);
+    doc.close();
+
+    // レンダリング後に印刷起動
+    const triggerPrint = () => {
+      try {
+        iframe.contentWindow.focus();
+        iframe.contentWindow.print();
+      } catch (e) {
+        UI.toast('印刷ダイアログが開けませんでした: ' + e.message, 'error');
+      }
+      setTimeout(() => { try { iframe.remove(); } catch (e) {} }, 2000);
+    };
+    if (iframe.contentWindow.document.readyState === 'complete') {
+      setTimeout(triggerPrint, 250);
+    } else {
+      iframe.onload = () => setTimeout(triggerPrint, 250);
     }
   }
 };
