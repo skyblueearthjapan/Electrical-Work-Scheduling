@@ -77,10 +77,15 @@ const DataService = (function() {
       const uaIdx = headers.indexOf('updatedAt');
       if (uaIdx !== -1) {
         const current = sh.getRange(rowIdx, uaIdx + 1).getValue();
-        if (current && String(current) !== String(expectedUpdatedAt)) {
-          const e = new Error('他のユーザーが更新しました。最新を取得してください。');
-          e.code = 409;
-          throw e;
+        if (current) {
+          // Sheets が Date 自動変換するため getTime() で比較
+          const curMs = new Date(current).getTime();
+          const expMs = new Date(expectedUpdatedAt).getTime();
+          if (curMs !== expMs) {
+            const e = new Error('他のユーザーが更新しました。最新を取得してください。');
+            e.code = 409;
+            throw e;
+          }
         }
       }
     }
