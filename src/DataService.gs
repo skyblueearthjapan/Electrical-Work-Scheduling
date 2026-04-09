@@ -21,7 +21,18 @@ const DataService = (function() {
     const headers = data[0];
     const rows = data.slice(1).map(function(row) {
       const obj = {};
-      headers.forEach(function(h, i) { obj[h] = row[i]; });
+      headers.forEach(function(h, i) {
+        var v = row[i];
+        if (v instanceof Date) {
+          // Sheets が文字列を Date に自動変換するため正規化
+          if (h === 'start' || h === 'end' || h === 'dueDate') {
+            v = Utilities.formatDate(v, 'Asia/Tokyo', 'yyyy-MM-dd');
+          } else {
+            v = Utilities.formatDate(v, 'Asia/Tokyo', "yyyy-MM-dd'T'HH:mm:ss");
+          }
+        }
+        obj[h] = v;
+      });
       obj._rowIndex = 0; // filled later if needed
       return obj;
     });
