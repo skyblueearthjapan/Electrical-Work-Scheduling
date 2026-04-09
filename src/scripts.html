@@ -231,6 +231,16 @@ const SaveQueue = {
     if (!arr || !id) return;
     const item = arr.find(x => x['scheduleId'] === id);
     if (item) item.updatedAt = newUpdatedAt;
+
+    // flush 中に再 enqueue された操作の updatedAt も更新する
+    for (const k of Object.keys(this.pending)) {
+      const op = this.pending[k];
+      if (!op.args || !op.args.length) continue;
+      const pid = op.fnName.includes('create') ? (op.args[0] && op.args[0].scheduleId) : op.args[0];
+      if (pid !== id) continue;
+      if (op.fnName.includes('update'))      op.args[2] = newUpdatedAt;
+      else if (op.fnName.includes('delete')) op.args[1] = newUpdatedAt;
+    }
   },
 
   async flush() {
