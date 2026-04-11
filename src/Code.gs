@@ -22,6 +22,7 @@ function doGet(e) {
     const template = HtmlService.createTemplateFromFile('index');
     template.userEmail = Session.getActiveUser().getEmail() || '';
     template.userRole = getUserRole_(template.userEmail);
+    template.PORTAL_URL = 'https://script.google.com/a/macros/lineworks-local.info/s/AKfycbx2eyJMOYP9o--GPBuhY-pj071IIR6Kqb_0xALwwNzdLQZux0dIAlL3P9EoCucnzXA/exec?pli=1';
     return template.evaluate()
       .setTitle('電気工事スケジューリング')
       .addMetaTag('viewport', 'width=device-width, initial-scale=1')
